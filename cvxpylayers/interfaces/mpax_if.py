@@ -103,7 +103,12 @@ class MPAX_data:
         solution = self.solver(
             self.model
         )
-        return solution
+        return solution.x, solution.y
 
-    def derivative(self):
+    def derivative(self, primal, dual):
         return 
+
+    def torch_derivative(self, primal, dual):
+        import torch
+        quad, lin, con = derivative(self, jnp.array(primal), jnp.array(dual))
+        return torch.tensor(quad), torch.tensor(lin), torch.tensor(con)

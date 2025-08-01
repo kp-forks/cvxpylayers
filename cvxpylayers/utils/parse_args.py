@@ -22,7 +22,7 @@ class LayersContext:
     reduced_A: scipy.sparse.csr_array
     cone_dims: dict[str, int | list[int]]
     var_recover: list[VariableRecovery]
-    col_to_user_order: dict[int, int]
+    user_order_to_col_order: dict[int, int]
 
 
 def parse_args(problem, variables, parameters, solver, kwargs):
@@ -49,13 +49,17 @@ def parse_args(problem, variables, parameters, solver, kwargs):
     param_prob = data[cp.settings.PARAM_PROB]
     param_ids = [p.id for p in param_order]
     cone_dims = dims_to_solver_dict(data["dims"])
+    user_order_to_col = {
+        i: col for col, i in sorted(
+            [(param_prob.param_id_to_col[p.id], i) for i, p in enumerate(param_order)]
+        )
+    }
+    user_order_to_col_order = {}
+    for j, i in enumerate(user_order_to_col.keys()):
+        user_order_to_col_order[i]= j
 
     return LayersContext(
             param_prob.reduced_P, param_prob.q, param_prob.reduced_A, cone_dims,
-            var_recover = [VariableRecovery(slice(start := param_prob.var_id_to_col[v.id], start + v.size)) for v in variables]
-            col_to_user_order = {
-                col: i for col, i in sorted(
-                    [(param_prob.param_id_to_col[p.id], i) for i, p in enumerate(param_order)]
-                )
-            }
+            var_recover = [VariableRecovery(slice(start := param_prob.var_id_to_col[v.id], start + v.size)) for v in variables],
+            user_order_to_col_order=user_order_to_col_order
     )
