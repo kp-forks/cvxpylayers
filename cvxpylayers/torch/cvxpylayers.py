@@ -27,7 +27,8 @@ class GpuCvxpyLayer(torch.nn.Module):
         P_eval = self.P @ p_stack
         q_eval = self.q @ p_stack
         A_eval = self.A @ p_stack
-        return _CvxpyLayer(P_eval, q_eval, A_eval, ctx)
+        primal, dual = _CvxpyLayer(P_eval, q_eval, A_eval, ctx)
+        return tuple(var(primal, dual) for var in ctx.var_recover)
 
 class _CvxpyLayer(torch.autograd.Function):
     @staticmethod
