@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.13'",
@@ -318,8 +318,7 @@ wheels = [
 
 [[package]]
 name = "cvxpy"
-version = "1.7.1"
-source = { registry = "https://pypi.org/simple" }
+source = { directory = "../../Research/cvxpy" }
 dependencies = [
     { name = "clarabel" },
     { name = "numpy" },
@@ -327,19 +326,44 @@ dependencies = [
     { name = "scipy" },
     { name = "scs" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8f/0a/e8bedfbb60f21e571e7a6a5e287dec746666ea8ae21829b46f451e264fe9/cvxpy-1.7.1.tar.gz", hash = "sha256:6fbc13a0bccc076b6f53ed79aaa9ec1f9a892116e13b35f27b237b5244f0f269", size = 1633642, upload-time = "2025-07-18T21:55:46.457Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/94/e7/974c2074f1ec7ae49934fc977eb8f1a3b46b02f48fc9b33e5bd51bbd109b/cvxpy-1.7.1-cp312-cp312-macosx_10_13_universal2.whl", hash = "sha256:3320944b421fac94c3d6733e536f3c8d4e4fce97cce31db2e333110ca453d5d6", size = 1542517, upload-time = "2025-07-18T21:58:30.251Z" },
-    { url = "https://files.pythonhosted.org/packages/90/ce/5043d14908382f79048db884773e5bd2fc0813bd8f19c6bc4c5c9de0c9ad/cvxpy-1.7.1-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:644cb4f1916c198c4c08f5eb1e788687355e8add966104adf7cce0d341702342", size = 1196195, upload-time = "2025-07-18T21:58:31.71Z" },
-    { url = "https://files.pythonhosted.org/packages/94/7a/7f235fa7a9aea15b37bd470cb654e780f2730253504de0f718d6c5a3d29e/cvxpy-1.7.1-cp312-cp312-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:6df84bc8e221b045b136be33e34581f52eaf925d7e3843ccd86e29a775a3d1a8", size = 1198379, upload-time = "2025-07-18T21:55:43.687Z" },
-    { url = "https://files.pythonhosted.org/packages/0a/36/f5423595752fd876b227ce263b4ee6e91d6af4b1349117f80835771a94a6/cvxpy-1.7.1-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:845cd74035b0d00304d90659b869ee77c2cc3a5eb18e878c3c7aee191bfcae21", size = 1228135, upload-time = "2025-07-18T21:55:45.054Z" },
-    { url = "https://files.pythonhosted.org/packages/ce/3d/c346c883bde912d47915bd90c208ae18146d542d6ed2d0b74fd2e4b33a8c/cvxpy-1.7.1-cp312-cp312-win_amd64.whl", hash = "sha256:fd56e9f03766fd13c8cb905933883b72b71327c9e2594224946457e135d05398", size = 1127140, upload-time = "2025-07-18T21:45:15.301Z" },
-    { url = "https://files.pythonhosted.org/packages/4a/a0/8f14c6501f57b435c577aab7ff4076404142cb6e42f536d9b01067f85908/cvxpy-1.7.1-cp313-cp313-macosx_10_13_universal2.whl", hash = "sha256:64da382697f45eff9448578ffb19d7521d92c241c4a6cac6cba556d9c8e67bb3", size = 1542505, upload-time = "2025-07-18T21:56:10.737Z" },
-    { url = "https://files.pythonhosted.org/packages/ea/b5/77f688c190c2b7801f062a18376716113c3e8a23c8d61593ff97d0f7e5d9/cvxpy-1.7.1-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:3fc3c163c9eb15234f0a20185ad87bf0e7a75d819580e576235740308dc1bc40", size = 1196198, upload-time = "2025-07-18T21:56:12.275Z" },
-    { url = "https://files.pythonhosted.org/packages/3e/02/190bc5adfdc2a6765cb10d4b71afd9b2b1a9f6146d29a961103a22c4fce0/cvxpy-1.7.1-cp313-cp313-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:31bdd77b3684052c331aeffcd1cb303dfe4a92e80669dd9de30e57e9dafedecd", size = 1198523, upload-time = "2025-07-18T21:55:34.085Z" },
-    { url = "https://files.pythonhosted.org/packages/89/d4/51501a05698793ae526fee58a785ff93d5003dcd202c0989987666bf7be4/cvxpy-1.7.1-cp313-cp313-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:4f9e25e3a649eaf251b7638e9b54389c3a4fe511ec6807a06eabfd9cbf0e546f", size = 1228252, upload-time = "2025-07-18T21:55:35.395Z" },
-    { url = "https://files.pythonhosted.org/packages/20/06/50843aa5157a7d7db693f47b34ac3eadf47802300e893aa3446e06c358c3/cvxpy-1.7.1-cp313-cp313-win_amd64.whl", hash = "sha256:10c4757b858a9e903007bcd29f22cd1f9d6c1259a882f254235d15c867b63a37", size = 1127182, upload-time = "2025-07-18T21:44:49.189Z" },
+
+[package.metadata]
+requires-dist = [
+    { name = "clarabel", specifier = ">=0.5.0" },
+    { name = "cvxopt", marker = "extra == 'cvxopt'" },
+    { name = "cvxopt", marker = "extra == 'glpk'" },
+    { name = "cvxopt", marker = "extra == 'glpk-mi'" },
+    { name = "cylp", marker = "extra == 'cbc'", specifier = ">=0.91.5" },
+    { name = "daqp", marker = "extra == 'daqp'" },
+    { name = "diffcp", marker = "extra == 'diffcp'" },
+    { name = "ecos", marker = "extra == 'ecos'" },
+    { name = "ecos", marker = "extra == 'ecos-bb'" },
+    { name = "gurobipy", marker = "extra == 'gurobi'" },
+    { name = "highspy", marker = "extra == 'highs'" },
+    { name = "hypothesis", marker = "extra == 'testing'" },
+    { name = "knitro", marker = "extra == 'knitro'" },
+    { name = "mosek", marker = "extra == 'mosek'" },
+    { name = "numpy", specifier = ">=2.0.0" },
+    { name = "ortools", marker = "extra == 'glop'", specifier = ">=9.7,<9.15" },
+    { name = "ortools", marker = "extra == 'pdlp'", specifier = ">=9.7,<9.15" },
+    { name = "osqp", specifier = ">=1.0.0" },
+    { name = "piqp", marker = "extra == 'piqp'" },
+    { name = "proxsuite", marker = "extra == 'proxqp'" },
+    { name = "pyscipopt", marker = "extra == 'scip'" },
+    { name = "pytest", marker = "extra == 'testing'" },
+    { name = "qoco", marker = "extra == 'qoco'" },
+    { name = "qpalm", marker = "extra == 'qpalm'", specifier = "~=1.2.5" },
+    { name = "scipy", specifier = ">=1.13.0" },
+    { name = "scipy", marker = "extra == 'scipy'" },
+    { name = "scs", specifier = ">=3.2.4.post1" },
+    { name = "sphinx", marker = "extra == 'doc'" },
+    { name = "sphinx-design", marker = "extra == 'doc'" },
+    { name = "sphinx-immaterial", marker = "extra == 'doc'", specifier = ">=0.11.7" },
+    { name = "sphinx-inline-tabs", marker = "extra == 'doc'" },
+    { name = "sphinxcontrib-jquery", marker = "extra == 'doc'" },
+    { name = "xpress", marker = "extra == 'xpress'", specifier = ">=9.5" },
 ]
+provides-extras = ["cbc", "clarabel", "cvxopt", "diffcp", "ecos", "ecos-bb", "glop", "glpk", "glpk-mi", "gurobi", "highs", "mosek", "osqp", "pdlp", "piqp", "proxqp", "qoco", "qpalm", "scip", "scipy", "scs", "xpress", "daqp", "knitro", "testing", "doc"]
 
 [[package]]
 name = "cvxpylayers"
@@ -395,7 +419,7 @@ doc = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cvxpy", specifier = ">=1.7.1" },
+    { name = "cvxpy", directory = "../../Research/cvxpy" },
     { name = "diffcp", specifier = ">=1.1.0" },
     { name = "diffcp", marker = "extra == 'torch'", specifier = ">=1.1.0" },
     { name = "jax", marker = "extra == 'all'", specifier = ">=0.4.0" },

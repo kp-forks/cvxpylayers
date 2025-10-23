@@ -27,19 +27,19 @@ class DIFFCP_ctx:
     def __init__(self, objective_structure, constraint_structure, dims, lower_bounds, upper_bounds, output_slices, options=None):
         con_indices, con_ptr, (m, np1) = constraint_structure
 
-        self.A_structure = constraint_structure
+        self.A_structure = (con_indices, con_ptr)
         self.A_shape = (m, np1)
 
         self.dims = dims
 
 
     def torch_to_data(self, quad_obj_values, lin_obj_values, con_values):
-        A_aug = sp.csc_matrix((self.con_values.cpu().numpy(), self.A_structure), shape=self.A_shape)
+        A_aug = sp.csc_matrix((con_values.cpu().numpy(), *self.A_structure), shape=self.A_shape)
         return DIFFCP_data(
             A=A_aug[:, :-1],
-            b=A_aug[:, -1].toarray(),
-            c=lin_obj_values,
-            cone_dicts=self.dims,
+            b=A_aug[:, -1].toarray().flatten(),
+            c=lin_obj_values[:-1],
+            cone_dict=self.dims,
         )
 
     def solution_to_outputs(self, solution):
@@ -51,7 +51,7 @@ class DIFFCP_data:
     A: sp.csc_matrix
     b: np.ndarray
     c: np.ndarray
-    cone_dicts: dict[str, int | list[int]]
+    cone_dict: dict[str, int | list[int]]
 
     def torch_solve(self):
         import torch
