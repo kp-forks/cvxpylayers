@@ -12,7 +12,9 @@ def get_solver_ctx(
 
             ctx_cls = MPAX_ctx
         case "CUCLARABEL":
-            from cvxpylayers.interfaces.cuclarabel_if import CUCLARABEL_ctx
+            from cvxpylayers.interfaces.cuclarabel_if import (  # type: ignore[import-not-found]
+                CUCLARABEL_ctx,
+            )
 
             ctx_cls = CUCLARABEL_ctx
         case "DIFFCP":

@@ -1,16 +1,21 @@
 {
   "include": [
-    "src/cvxpylayers"
+    "src/cvxpylayers",
+    "tests/test_parse_args.py"
   ],
   "exclude": [
     "**/__pycache__",
     "**/.venv",
     "**/node_modules",
     "build",
-    "dist"
+    "dist",
+    "src/cvxpylayers/interfaces/mpax_if.py",
+    "src/cvxpylayers/torch/cvxpylayer.py"
   ],
+  "venvPath": ".",
+  "venv": ".venv",
   "typeCheckingMode": "basic",
-  "pythonVersion": "3.10",
+  "pythonVersion": "3.12",
   "pythonPlatform": "All",
   "reportMissingImports": true,
   "reportMissingTypeStubs": false,

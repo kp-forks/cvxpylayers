@@ -219,7 +219,7 @@ class TestParseArgs:
 
         # Pass parameters as a set instead of list/tuple
         with pytest.raises(ValueError, match="must be provided as a list or tuple"):
-            parse_args(problem, [x], {p}, "DIFFCP", {})
+            parse_args(problem, [x], {p}, "DIFFCP", {})  # type: ignore[arg-type]
 
     def test_parse_args_variables_not_list(self):
         """Test that variables must be list or tuple."""
@@ -229,7 +229,7 @@ class TestParseArgs:
 
         # Pass variables as a set instead of list/tuple
         with pytest.raises(ValueError, match="must be provided as a list or tuple"):
-            parse_args(problem, {x}, [p], "DIFFCP", {})
+            parse_args(problem, {x}, [p], "DIFFCP", {})  # type: ignore[arg-type]
 
     def test_parse_args_default_solver(self):
         """Test that solver defaults to DIFFCP when None."""

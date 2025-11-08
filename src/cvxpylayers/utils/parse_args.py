@@ -25,7 +25,7 @@ class VariableRecovery:
 class LayersContext:
     parameters: list[cp.Parameter]
     reduced_P: scipy.sparse.csr_array
-    q: scipy.sparse.csr_array
+    q: scipy.sparse.csr_array | None
     reduced_A: scipy.sparse.csr_array
     cone_dims: dict[str, int | list[int]]
     solver_ctx: object
@@ -91,10 +91,10 @@ def parse_args(
     problem: cp.Problem,
     variables: list[cp.Variable],
     parameters: list[cp.Parameter],
-    solver: str,
+    solver: str | None,
     kwargs: dict[str, Any],
 ) -> LayersContext:
-    if not problem.is_dcp(dpp=True):
+    if not problem.is_dcp(dpp=True):  # type: ignore[call-arg]
         raise ValueError("Problem must be DPP.")
 
     if not set(problem.parameters()) == set(parameters):
@@ -109,7 +109,7 @@ def parse_args(
     if solver is None:
         solver = "DIFFCP"
     data, _, _ = problem.get_problem_data(solver=solver, **kwargs)
-    param_prob = data[cp.settings.PARAM_PROB]
+    param_prob = data[cp.settings.PARAM_PROB]  # type: ignore[attr-defined]
     cone_dims = data["dims"]
 
     solver_ctx = cvxpylayers.interfaces.get_solver_ctx(

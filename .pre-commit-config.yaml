@@ -12,12 +12,13 @@ repos:
       # Run the formatter
       - id: ruff-format
 
-  # Pyright - Static type checker (only on specific files for now)
+  # Pyright - Static type checker (gradually expanding coverage)
   - repo: https://github.com/RobertCraigie/pyright-python
     rev: v1.1.390
     hooks:
       - id: pyright
-        files: ^(src/cvxpylayers/utils/parse_args\.py|tests/test_parse_args\.py)$
+        files: ^(src/cvxpylayers/.*\.py|tests/test_parse_args\.py)$
+        exclude: ^(src/cvxpylayers/interfaces/mpax_if\.py|src/cvxpylayers/torch/cvxpylayer\.py)$
 
   # Standard pre-commit hooks
   - repo: https://github.com/pre-commit/pre-commit-hooks
