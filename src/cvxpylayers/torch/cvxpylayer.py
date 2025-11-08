@@ -46,7 +46,13 @@ class GpuCvxpyLayer(torch.nn.Module):
         q_eval = self.q @ p_stack
         A_eval = self.A @ p_stack
         primal, dual, _, _ = _CvxpyLayer.apply(P_eval, q_eval, A_eval, self.ctx)
-        return tuple(var.recover(primal, dual) for var in self.ctx.var_recover)
+        results = tuple(var.recover(primal, dual) for var in self.ctx.var_recover)
+
+        # Squeeze batch dimension for unbatched inputs (matching master's approach)
+        if not batch:
+            results = tuple(r.squeeze(0) for r in results)
+
+        return results
 
 
 class _CvxpyLayer(torch.autograd.Function):

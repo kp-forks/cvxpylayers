@@ -12,9 +12,10 @@ class VariableRecovery:
 
     def recover(self, primal_sol, dual_sol):
         if self.primal is not None:
-            return primal_sol[self.primal]
+            # Use ellipsis slicing to handle both batched (batch_size, num_vars) and unbatched (num_vars,)
+            return primal_sol[..., self.primal]
         if self.dual is not None:
-            return dual_sol[self.dual]
+            return dual_sol[..., self.dual]
         else:
             raise RuntimeError("")
 

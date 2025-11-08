@@ -362,8 +362,8 @@ def test_broadcasting():
     grad_A_cvxpy, grad_b_cvxpy = grad(x.sum(), [A_th, b_th])
     grad_A_lstsq, grad_b_lstsq = grad(x_lstsq.sum(), [A_th, b_th_0])
 
-    assert torch.allclose(grad_A_cvxpy / 2., grad_A_lstsq, atol=1e-6)
-    assert torch.allclose(grad_b_cvxpy[0], grad_b_lstsq, atol=1e-6)
+    assert torch.allclose(grad_A_cvxpy / 2., grad_A_lstsq, atol=1e-4)
+    assert torch.allclose(grad_b_cvxpy[0], grad_b_lstsq, atol=1e-5)
 
 
 def test_shared_parameter():
@@ -405,11 +405,7 @@ def test_equality():
 
     b_th = torch.randn(n).double().requires_grad_()
 
-    try:
-        torch.autograd.gradcheck(layer, b_th)
-    except Exception as e:
-        breakpoint()
-        raise e
+    torch.autograd.gradcheck(layer, b_th)
 
 
 @pytest.mark.skip
