@@ -153,7 +153,7 @@ class MPAX_data:
         solution, fun = jax.vjp(solver, self.model)
         return *solution, fun
 
-    def torch_solve(self):
+    def torch_solve(self, solver_args=None):
         import torch
 
         primal, dual, fun = self.jax_solve()
@@ -166,8 +166,8 @@ class MPAX_data:
     def jax_derivative(self, primal, dual, fun):
         return fun((primal, dual))
 
-    def torch_derivative(self, primal, dual, fun):
+    def torch_derivative(self, primal, dual, adj_batch):
         import torch
 
-        quad, lin, con = self.jax_derivative(jnp.array(primal), jnp.array(dual), fun)
+        quad, lin, con = self.jax_derivative(jnp.array(primal), jnp.array(dual), adj_batch)
         return torch.tensor(quad), torch.tensor(lin), torch.tensor(con)

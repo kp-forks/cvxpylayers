@@ -9,8 +9,7 @@
     "**/node_modules",
     "build",
     "dist",
-    "src/cvxpylayers/interfaces/mpax_if.py",
-    "src/cvxpylayers/torch/cvxpylayer.py"
+    "src/cvxpylayers/interfaces/mpax_if.py"
   ],
   "venvPath": ".",
   "venv": ".venv",

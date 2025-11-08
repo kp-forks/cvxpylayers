@@ -1,10 +1,32 @@
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 import cvxpy as cp
 import scipy.sparse
 
 import cvxpylayers.interfaces
+
+
+class SolverData(Protocol):
+    """Protocol for data objects returned by solver context."""
+
+    def torch_solve(self, solver_args: dict[str, Any] | None = None) -> tuple[Any, Any, Any]:
+        """Solve the problem using torch backend."""
+        ...
+
+    def torch_derivative(self, primal: Any, dual: Any, adj_batch: Any) -> tuple[Any, Any, Any]:
+        """Compute derivatives using torch backend."""
+        ...
+
+
+class SolverContext(Protocol):
+    """Protocol for solver context objects."""
+
+    def torch_to_data(
+        self, quad_obj_values: Any, lin_obj_values: Any, con_values: Any
+    ) -> SolverData:
+        """Convert torch tensors to solver data format."""
+        ...
 
 
 @dataclass
@@ -28,7 +50,7 @@ class LayersContext:
     q: scipy.sparse.csr_array | None
     reduced_A: scipy.sparse.csr_array
     cone_dims: dict[str, int | list[int]]
-    solver_ctx: object
+    solver_ctx: SolverContext
     var_recover: list[VariableRecovery]
     user_order_to_col_order: dict[int, int]
     batch_sizes: list[int] | None = (
