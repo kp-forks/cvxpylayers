@@ -1,12 +1,15 @@
 """Unit tests for cvxpylayers.torch."""
+
 import cvxpy as cp
 import diffcp
 import numpy as np
 import pytest
 import torch
-from cvxpylayers.torch import CvxpyLayer
+
 # from cvxpylayers.utils import backward_numpy, forward_numpy
 from torch.autograd import grad
+
+from cvxpylayers.torch import CvxpyLayer
 
 torch.set_default_dtype(torch.double)
 
@@ -48,7 +51,7 @@ def test_example():
     b_tch = torch.randn(m, requires_grad=True)
 
     # solve the problem
-    solution, = cvxpylayer(A_tch, b_tch)
+    (solution,) = cvxpylayer(A_tch, b_tch)
 
     # compute the gradient of the sum of the solution with respect to A, b
     solution.sum().backward()
@@ -69,7 +72,7 @@ def test_simple_batch_socp():
     x = cp.Variable((n, 1), name="x")
 
     objective = 0.5 * cp.sum_squares(P_sqrt @ x) + q.T @ x
-    constraints = [A@x == b, cp.norm(x) <= 1]
+    constraints = [A @ x == b, cp.norm(x) <= 1]
     prob = cp.Problem(cp.Minimize(objective), constraints)
 
     prob_tch = CvxpyLayer(prob, [P_sqrt, q, A, b], [x])
@@ -89,7 +92,7 @@ def test_least_squares():
     A = cp.Parameter((m, n))
     b = cp.Parameter(m)
     x = cp.Variable(n)
-    obj = cp.sum_squares(A@x - b) + cp.sum_squares(x)
+    obj = cp.sum_squares(A @ x - b) + cp.sum_squares(x)
     prob = cp.Problem(cp.Minimize(obj))
     prob_th = CvxpyLayer(prob, [A, b], [x])
 
@@ -98,11 +101,12 @@ def test_least_squares():
 
     x = prob_th(A_th, b_th, solver_args={"eps": 1e-10})[0]
 
-    def lstsq(
-        A,
-        b): return torch.linalg.solve(
-        A.t() @ A + torch.eye(n, dtype=torch.float64),
-            (A.t() @ b).unsqueeze(1))
+    def lstsq(A, b):
+        return torch.linalg.solve(
+            A.t() @ A + torch.eye(n, dtype=torch.float64),
+            (A.t() @ b).unsqueeze(1),
+        )
+
     x_lstsq = lstsq(A_th, b_th)
 
     grad_A_lstsq, grad_b_lstsq = grad(x_lstsq.sum(), [A_th, b_th])
@@ -120,20 +124,26 @@ def test_least_squares_custom_method():
     A = cp.Parameter((m, n))
     b = cp.Parameter(m)
     x = cp.Variable(n)
-    obj = cp.sum_squares(A@x - b) + cp.sum_squares(x)
+    obj = cp.sum_squares(A @ x - b) + cp.sum_squares(x)
     prob = cp.Problem(cp.Minimize(obj))
-    prob_th = CvxpyLayer(prob, [A, b], [x], custom_method=(forward_numpy, backward_numpy))
+    prob_th = CvxpyLayer(
+        prob,
+        [A, b],
+        [x],
+        custom_method=(forward_numpy, backward_numpy),  # noqa: F821
+    )
 
     A_th = torch.randn(m, n).double().requires_grad_()
     b_th = torch.randn(m).double().requires_grad_()
 
     x = prob_th(A_th, b_th, solver_args={"eps": 1e-10})[0]
 
-    def lstsq(
-        A,
-        b): return torch.linalg.solve(
-        A.t() @ A + torch.eye(n, dtype=torch.float64),
-            (A.t() @ b).unsqueeze(1))
+    def lstsq(A, b):
+        return torch.linalg.solve(
+            A.t() @ A + torch.eye(n, dtype=torch.float64),
+            (A.t() @ b).unsqueeze(1),
+        )
+
     x_lstsq = lstsq(A_th, b_th)
 
     grad_A_cvxpy, grad_b_cvxpy = grad(x.sum(), [A_th, b_th])
@@ -161,12 +171,14 @@ def test_logistic_regression():
     y = y_np
 
     log_likelihood = cp.sum(
-        cp.multiply(y, X @ a) -
-        cp.log_sum_exp(cp.hstack([np.zeros((N, 1)), X @ a]).T, axis=0,
-                       keepdims=True).T,
+        cp.multiply(y, X @ a)
+        - cp.log_sum_exp(
+            cp.hstack([np.zeros((N, 1)), X @ a]).T,
+            axis=0,
+            keepdims=True,
+        ).T,
     )
-    prob = cp.Problem(
-        cp.Minimize(-log_likelihood + lam * cp.sum_squares(a)))
+    prob = cp.Problem(cp.Minimize(-log_likelihood + lam * cp.sum_squares(a)))
 
     fit_logreg = CvxpyLayer(prob, [X, lam], [a])
 
@@ -189,15 +201,15 @@ def test_entropy_maximization():
     b = cp.Parameter(m)
     F = cp.Parameter((p, n))
     g = cp.Parameter(p)
-    obj = cp.Maximize(cp.sum(cp.entr(x)) - .01 * cp.sum_squares(x))
-    constraints = [A @ x == b,
-                   F @ x <= g]
+    obj = cp.Maximize(cp.sum(cp.entr(x)) - 0.01 * cp.sum_squares(x))
+    constraints = [A @ x == b, F @ x <= g]
     prob = cp.Problem(obj, constraints)
     layer = CvxpyLayer(prob, [A, b, F, g], [x])
 
     A_th, b_th, F_th, g_th = map(
         lambda x: torch.from_numpy(x).requires_grad_(),
-        [A_np, b_np, F_np, g_np])
+        [A_np, b_np, F_np, g_np],
+    )
 
     torch.autograd.gradcheck(layer, (A_th, b_th, F_th, g_th))
 
@@ -207,13 +219,13 @@ def test_lml():
     k = 2
     x = cp.Parameter(4)
     y = cp.Variable(4)
-    obj = -x @ y - cp.sum(cp.entr(y)) - cp.sum(cp.entr(1. - y))
+    obj = -x @ y - cp.sum(cp.entr(y)) - cp.sum(cp.entr(1.0 - y))
     cons = [cp.sum(y) == k]
     prob = cp.Problem(cp.Minimize(obj), cons)
     lml = CvxpyLayer(prob, [x], [y])
 
-    x_th = torch.tensor([1., -1., -1., -1.]).requires_grad_()
-    torch.autograd.gradcheck(lml, (x_th, ), atol=1e-3)
+    x_th = torch.tensor([1.0, -1.0, -1.0, -1.0]).requires_grad_()
+    torch.autograd.gradcheck(lml, (x_th,), atol=1e-3)
 
 
 @pytest.mark.skip
@@ -234,11 +246,8 @@ def test_sdp():
 
     X = cp.Variable((n, n), symmetric=True)
     constraints = [X >> 0]
-    constraints += [
-        cp.trace(A[i]@X) == b[i] for i in range(p)
-    ]
-    prob = cp.Problem(cp.Minimize(cp.trace(C@X) + cp.sum_squares(X)),
-                      constraints)
+    constraints += [cp.trace(A[i] @ X) == b[i] for i in range(p)]
+    prob = cp.Problem(cp.Minimize(cp.trace(C @ X) + cp.sum_squares(X)), constraints)
     layer = CvxpyLayer(prob, [C] + A + b, [X])
 
     torch.autograd.gradcheck(layer, [C_th] + A_th + b_th)
@@ -306,7 +315,7 @@ def test_incorrect_parameter_shape():
     A = cp.Parameter((m, n))
     b = cp.Parameter(m)
     x = cp.Variable(n)
-    obj = cp.sum_squares(A@x - b) + cp.sum_squares(x)
+    obj = cp.sum_squares(A @ x - b) + cp.sum_squares(x)
     prob = cp.Problem(cp.Minimize(obj))
     prob_th = CvxpyLayer(prob, [A, b], [x])
 
@@ -342,7 +351,7 @@ def test_broadcasting():
     A = cp.Parameter((m, n))
     b = cp.Parameter(m)
     x = cp.Variable(n)
-    obj = cp.sum_squares(A@x - b) + cp.sum_squares(x)
+    obj = cp.sum_squares(A @ x - b) + cp.sum_squares(x)
     prob = cp.Problem(cp.Minimize(obj))
     prob_th = CvxpyLayer(prob, [A, b], [x])
 
@@ -352,17 +361,18 @@ def test_broadcasting():
 
     x = prob_th(A_th, b_th, solver_args={"eps": 1e-10})[0]
 
-    def lstsq(
-        A,
-        b): return torch.linalg.solve(
-        A.t() @ A + torch.eye(n, dtype=torch.float64),
-            A.t() @ b)
+    def lstsq(A, b):
+        return torch.linalg.solve(
+            A.t() @ A + torch.eye(n, dtype=torch.float64),
+            A.t() @ b,
+        )
+
     x_lstsq = lstsq(A_th, b_th_0)
 
     grad_A_cvxpy, grad_b_cvxpy = grad(x.sum(), [A_th, b_th])
     grad_A_lstsq, grad_b_lstsq = grad(x_lstsq.sum(), [A_th, b_th_0])
 
-    assert torch.allclose(grad_A_cvxpy / 2., grad_A_lstsq, atol=1e-6)
+    assert torch.allclose(grad_A_cvxpy / 2.0, grad_A_lstsq, atol=1e-6)
     assert torch.allclose(grad_b_cvxpy[0], grad_b_lstsq, atol=1e-6)
 
 
@@ -387,8 +397,8 @@ def test_shared_parameter():
     }
 
     def f(A_th):
-        x1, = layer1(A_th, solver_args=solver_args)
-        x2, = layer2(A_th, solver_args=solver_args)
+        (x1,) = layer1(A_th, solver_args=solver_args)
+        (x2,) = layer2(A_th, solver_args=solver_args)
         return torch.cat((x1, x2))
 
     torch.autograd.gradcheck(f, A_th)
@@ -400,7 +410,7 @@ def test_equality():
     A = np.eye(n)
     x = cp.Variable(n)
     b = cp.Parameter(n)
-    prob = cp.Problem(cp.Minimize(cp.sum_squares(x)), [A@x == b])
+    prob = cp.Problem(cp.Minimize(cp.sum_squares(x)), [A @ x == b])
     layer = CvxpyLayer(prob, parameters=[b], variables=[x])
 
     b_th = torch.randn(n).double().requires_grad_()
@@ -419,13 +429,12 @@ def test_basic_gp():
     b = cp.Parameter(pos=True, value=1.0)
     c = cp.Parameter(value=0.5)
 
-    objective_fn = 1/(x*y*z)
-    constraints = [a*(x*y + x*z + y*z) <= b, x >= y**c]
+    objective_fn = 1 / (x * y * z)
+    constraints = [a * (x * y + x * z + y * z) <= b, x >= y**c]
     problem = cp.Problem(cp.Minimize(objective_fn), constraints)
     problem.solve(cp.SCS, gp=True)
 
-    layer = CvxpyLayer(
-        problem, parameters=[a, b, c], variables=[x, y, z], gp=True)
+    layer = CvxpyLayer(problem, parameters=[a, b, c], variables=[x, y, z], gp=True)
     a_th = torch.tensor([2.0]).requires_grad_()
     b_th = torch.tensor([1.0]).requires_grad_()
     c_th = torch.tensor([0.5]).requires_grad_()
@@ -457,7 +466,7 @@ def test_no_grad_context():
     b_tch = torch.randn(m)
 
     with torch.no_grad():
-        solution, = cvxpylayer(A_tch, b_tch)
+        (solution,) = cvxpylayer(A_tch, b_tch)
         # These tensors should not require grad when in no_grad context
         assert torch.is_tensor(solution)
         assert not solution.requires_grad
@@ -478,7 +487,7 @@ def test_requires_grad_false():
     b_tch = torch.randn(m, requires_grad=False)
 
     # solve the problem
-    solution, = cvxpylayer(A_tch, b_tch)
+    (solution,) = cvxpylayer(A_tch, b_tch)
     # These tensors should not require grad when inputs don't require grad
     assert torch.is_tensor(solution)
     assert not solution.requires_grad

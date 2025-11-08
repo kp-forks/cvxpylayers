@@ -1,8 +1,9 @@
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
-import scipy.sparse as sp
-import numpy as np
+
 import diffcp
+import numpy as np
+import scipy.sparse as sp
 from cvxpy.reductions.solvers.conic_solvers.scs_conif import dims_to_solver_dict
 
 
@@ -56,7 +57,7 @@ class DIFFCP_ctx:
         for i in range(batch_size):
             A_aug = sp.csc_matrix(
                 (con_values[:, i].cpu().numpy(), *self.A_structure),
-                shape=self.A_shape
+                shape=self.A_shape,
             )
             As.append(-A_aug[:, :-1])  # Negate A to match DIFFCP convention
             bs.append(A_aug[:, -1].toarray().flatten())
@@ -94,8 +95,11 @@ class DIFFCP_data:
         print(self.cone_dict)
         # Always use batch solve
         xs, ys, _, _, adj_batch = diffcp.solve_and_derivative_batch(
-            self.As, self.bs, self.cs, [self.cone_dict] * self.batch_size,
-            **solver_args
+            self.As,
+            self.bs,
+            self.cs,
+            [self.cone_dict] * self.batch_size,
+            **solver_args,
         )
         # Stack results into batched tensors
         primal = torch.stack([torch.from_numpy(x) for x in xs])

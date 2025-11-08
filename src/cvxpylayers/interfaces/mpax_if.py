@@ -1,8 +1,9 @@
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
-import scipy.sparse as sp
+
 import numpy as np
-from collections import namedtuple
+import scipy.sparse as sp
+
 try:
     import jax
     import jax.experimental.sparse
@@ -10,6 +11,7 @@ try:
     import mpax
 except ImportError:
     pass
+
 
 class MPAX_ctx:
     Q_idxs: jnp.ndarray
@@ -34,10 +36,21 @@ class MPAX_ctx:
 
     output_slices: list[slice]
 
-    def __init__(self, objective_structure, constraint_structure, dims, lower_bounds, upper_bounds, options):
+    def __init__(
+        self,
+        objective_structure,
+        constraint_structure,
+        dims,
+        lower_bounds,
+        upper_bounds,
+        options,
+    ):
         obj_indices, obj_ptr, (n, _) = objective_structure
         self.c_slice = slice(0, n)
-        obj_csr = sp.csc_array((np.arange(obj_indices.size), obj_indices, obj_ptr), shape=(n, n)).tocsr()
+        obj_csr = sp.csc_array(
+            (np.arange(obj_indices.size), obj_indices, obj_ptr),
+            shape=(n, n),
+        ).tocsr()
         self.Q_idxs = obj_csr.data
         self.Q_structure = obj_csr.indices, obj_csr.indptr
         self.Q_shape = (n, n)
@@ -45,56 +58,78 @@ class MPAX_ctx:
         con_indices, con_ptr, (m, np1) = constraint_structure
         assert np1 == n + 1
         con_slice_start = con_ptr[-2]
-        #TODO: Fix slice construction; if there are explicit 0s they have been
+        # TODO: Fix slice construction; if there are explicit 0s they have been
         # reduced out and we need to reconstruct them
         self.b_slice = slice(con_slice_start, con_slice_start + dims.zero)
         self.h_slice = slice(con_slice_start + dims.zero, con_ptr[-1])
 
-        con_csr = sp.csc_array((np.arange(con_indices.size), con_indices, con_ptr[:-1]), shape=(m, n)).tocsr()
+        con_csr = sp.csc_array(
+            (np.arange(con_indices.size), con_indices, con_ptr[:-1]),
+            shape=(m, n),
+        ).tocsr()
         split = con_csr.indptr[dims.zero]
 
         self.A_idxs = con_csr.data[:split]
-        self.A_structure = con_csr.indices[:split], con_csr.indptr[:dims.zero+1]
+        self.A_structure = con_csr.indices[:split], con_csr.indptr[: dims.zero + 1]
         self.A_shape = (dims.zero, n)
 
         self.G_idxs = con_csr.data[split:]
-        self.G_structure = con_csr.indices[split:], con_csr.indptr[dims.zero:] - split
+        self.G_structure = con_csr.indices[split:], con_csr.indptr[dims.zero :] - split
         self.G_shape = (m - dims.zero, n)
 
         self.l = lower_bounds if lower_bounds is not None else -jnp.inf * jnp.ones(n)
         self.u = upper_bounds if upper_bounds is not None else jnp.inf * jnp.ones(n)
 
-        self.warm_start = options.pop('warm_start', False)
+        self.warm_start = options.pop("warm_start", False)
         assert self.warm_start is False
-        algorithm = options.pop('algorithm', 'raPDHG')
-        if algorithm == 'raPDHG':
+        algorithm = options.pop("algorithm", "raPDHG")
+        if algorithm == "raPDHG":
             alg = mpax.raPDHG
-        elif algorithm == 'r2HPDHG':
+        elif algorithm == "r2HPDHG":
             alg = mpax.r2HPDHG
         else:
-            raise ValueError('Invalid MPAX algorithm')
+            raise ValueError("Invalid MPAX algorithm")
         solver = alg(warm_start=self.warm_start, **options)
         self.solver = jax.jit(solver.optimize)
-        #self.output_slices = output_slices
+        # self.output_slices = output_slices
 
-    def jax_to_data(self, quad_obj_values, lin_obj_values, con_values):   # TODO: Add broadcasting  (will need jnp.tile to tile structures)
+    def jax_to_data(
+        self,
+        quad_obj_values,
+        lin_obj_values,
+        con_values,
+    ):  # TODO: Add broadcasting  (will need jnp.tile to tile structures)
         model = mpax.create_qp(
-            P:=jax.experimental.sparse.BCSR((quad_obj_values[self.Q_idxs], *self.Q_structure), shape=self.Q_shape),
-            q:=lin_obj_values[self.c_slice],
-            A:=jax.experimental.sparse.BCSR((con_values[self.A_idxs], *self.A_structure), shape=self.A_shape),
-            b:=con_values[self.b_slice],
-            G:=jax.experimental.sparse.BCSR((con_values[self.G_idxs], *self.G_structure), shape=self.G_shape),
-            #h:=con_values[self.h_slice],
-            h:=jnp.zeros(6),
+            P := jax.experimental.sparse.BCSR(
+                (quad_obj_values[self.Q_idxs], *self.Q_structure),
+                shape=self.Q_shape,
+            ),
+            q := lin_obj_values[self.c_slice],
+            A := jax.experimental.sparse.BCSR(
+                (con_values[self.A_idxs], *self.A_structure),
+                shape=self.A_shape,
+            ),
+            b := con_values[self.b_slice],
+            G := jax.experimental.sparse.BCSR(
+                (con_values[self.G_idxs], *self.G_structure),
+                shape=self.G_shape,
+            ),
+            # h:=con_values[self.h_slice],
+            h := jnp.zeros(6),
             self.l,
             self.u,
         )
         return MPAX_data(
             model,
-            self.solver
+            self.solver,
         )
 
-    def torch_to_data(self, quad_obj_values, lin_obj_values, con_values):   # TODO: Add broadcasting  (will need jnp.tile to tile structures)
+    def torch_to_data(
+        self,
+        quad_obj_values,
+        lin_obj_values,
+        con_values,
+    ):  # TODO: Add broadcasting  (will need jnp.tile to tile structures)
         return self.jax_to_data(
             jnp.array(quad_obj_values),
             jnp.array(lin_obj_values),
@@ -114,21 +149,25 @@ class MPAX_data:
         def solver(model):
             solution = self.solver(model)
             return solution.primal_solution, solution.dual_solution
+
         solution, fun = jax.vjp(solver, self.model)
         return *solution, fun
-    
+
     def torch_solve(self):
         import torch
-        primal, dual, fun = self.jax_solve()
-        return torch.utils.dlpack.from_dlpack(primal), \
-               torch.utils.dlpack.from_dlpack(dual), \
-               fun
 
+        primal, dual, fun = self.jax_solve()
+        return (
+            torch.utils.dlpack.from_dlpack(primal),
+            torch.utils.dlpack.from_dlpack(dual),
+            fun,
+        )
 
     def jax_derivative(self, primal, dual, fun):
         return fun((primal, dual))
 
     def torch_derivative(self, primal, dual, fun):
         import torch
+
         quad, lin, con = self.jax_derivative(jnp.array(primal), jnp.array(dual), fun)
         return torch.tensor(quad), torch.tensor(lin), torch.tensor(con)
