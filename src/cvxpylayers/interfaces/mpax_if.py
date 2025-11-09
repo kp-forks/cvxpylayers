@@ -58,11 +58,14 @@ class MPAX_ctx:
 
         con_indices, con_ptr, (m, np1) = constraint_structure
         assert np1 == n + 1
-        con_slice_start = con_ptr[-2]
-        # TODO: Fix slice construction; if there are explicit 0s they have been
-        # reduced out and we need to reconstruct them
-        self.b_slice = slice(con_slice_start, con_slice_start + dims.zero)
-        self.h_slice = slice(con_slice_start + dims.zero, con_ptr[-1])
+
+        # Extract indices for the last column (which contains b and h values)
+        # Use indices instead of slices because sparse matrices may have reduced out
+        # explicit zeros, so we need to reconstruct the full dense vectors
+        self.last_col_start = con_ptr[-2]
+        self.last_col_end = con_ptr[-1]
+        self.last_col_indices = con_indices[self.last_col_start:self.last_col_end]
+        self.m = m  # Total number of constraint rows
 
         con_csr = sp.csc_array(
             (np.arange(con_indices.size), con_indices, con_ptr[:-1]),
@@ -102,6 +105,31 @@ class MPAX_ctx:
         lin_obj_values,
         con_values,
     ):  # TODO: Add broadcasting  (will need jnp.tile to tile structures)
+        # Sign conventions for cvxpylayers vs CVXPY solver interface:
+        # cvxpylayers gets data from param_prob.reduced_A with different signs than
+        # CVXPY's solver interface (data[s.A], data[s.B], etc.)
+        # The correct convention is: negate b and h, but NOT A or G
+
+        # Extract values from the last column and reconstruct dense b and h vectors.
+        # The last column of the constraint matrix contains the RHS values,
+        # but sparse matrices may have reduced out explicit zeros, so we need to
+        # build dense arrays with zeros for missing rows.
+        last_col_values = con_values[self.last_col_start:self.last_col_end]
+
+        # Split indices based on whether rows are equalities (< dims.zero) or inequalities
+        split_point = jnp.searchsorted(self.last_col_indices, self.A_shape[0])
+
+        # Build dense b and h vectors with zeros for missing rows
+        b_vals = jnp.zeros(self.A_shape[0])  # Shape: (dims.zero,)
+        h_vals = jnp.zeros(self.G_shape[0])  # Shape: (m - dims.zero,)
+
+        # Fill in the values we have
+        b_row_indices = self.last_col_indices[:split_point]
+        h_row_indices = self.last_col_indices[split_point:] - self.A_shape[0]  # Offset to start from 0
+
+        b_vals = b_vals.at[b_row_indices].set(-last_col_values[:split_point])  # Negate b
+        h_vals = h_vals.at[h_row_indices].set(-last_col_values[split_point:])  # Negate h
+
         model = mpax.create_qp(
             P := jax.experimental.sparse.BCSR(
                 (quad_obj_values[self.Q_idxs], *self.Q_structure),
@@ -112,12 +140,12 @@ class MPAX_ctx:
                 (con_values[self.A_idxs], *self.A_structure),
                 shape=self.A_shape,
             ),
-            b := -con_values[self.b_slice],  # Negate b
+            b := b_vals,
             G := jax.experimental.sparse.BCSR(
                 (con_values[self.G_idxs], *self.G_structure),
                 shape=self.G_shape,
             ),
-            h := -con_values[self.h_slice],  # Negate h
+            h := h_vals,
             self.l,
             self.u,
         )
@@ -159,9 +187,13 @@ class MPAX_data:
         import torch
 
         primal, dual, fun = self.jax_solve()
+        # Convert JAX arrays to PyTorch tensors and add batch dimension
+        # (matching DIFFCP's behavior which stacks results)
+        primal_torch = torch.utils.dlpack.from_dlpack(primal).unsqueeze(0)  # Shape: (1, n)
+        dual_torch = torch.utils.dlpack.from_dlpack(dual).unsqueeze(0)      # Shape: (1, m)
         return (
-            torch.utils.dlpack.from_dlpack(primal),
-            torch.utils.dlpack.from_dlpack(dual),
+            primal_torch,
+            dual_torch,
             fun,
         )
 
