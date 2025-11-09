@@ -15,13 +15,24 @@ class GpuCvxpyLayer(torch.nn.Module):
         variables: list[cp.Variable],
         solver: str | None = None,
         gp: bool = False,
+        verbose: bool = False,
+        canon_backend: str | None = None,
         solver_args: dict[str, Any] | None = None,
     ) -> None:
         super().__init__()
         assert gp is False
         if solver_args is None:
             solver_args = {}
-        self.ctx = pa.parse_args(problem, variables, parameters, solver, solver_args)
+        self.ctx = pa.parse_args(
+            problem,
+            variables,
+            parameters,
+            solver,
+            gp=gp,
+            verbose=verbose,
+            canon_backend=canon_backend,
+            solver_args=solver_args,
+        )
         if self.ctx.reduced_P.reduced_mat is not None:  # type: ignore[attr-defined]
             self.P = torch.nn.Buffer(  # type: ignore[arg-type]
                 scipy_csr_to_torch_csr(self.ctx.reduced_P.reduced_mat),  # type: ignore[attr-defined]

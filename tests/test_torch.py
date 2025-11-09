@@ -528,3 +528,53 @@ def test_batch_size_one_preserves_batch_dimension():
         f"Expected gradient shape (1, {n}), got {b_batched.grad.shape}. "
         "Batch dimension should be preserved for batch_size=1."
     )
+
+
+def test_solver_args_actually_used():
+    """Test that solver_args actually affect the solver's behavior.
+
+    This verifies solver_args are truly passed to the solver by:
+    1. Solving with very restrictive max_iters (should give suboptimal solution)
+    2. Solving with normal settings (should give better solution)
+    3. Verifying the solutions differ, proving solver_args were used
+    """
+    _ = set_seed(123)
+    m, n = 50, 20
+
+    A = cp.Parameter((m, n))
+    b = cp.Parameter(m)
+    x = cp.Variable(n)
+    obj = cp.sum_squares(A @ x - b) + 0.01 * cp.sum_squares(x)
+    prob = cp.Problem(cp.Minimize(obj))
+
+    layer = CvxpyLayer(prob, [A, b], [x])
+
+    A_th = torch.randn(m, n).double()
+    b_th = torch.randn(m).double()
+
+    # Solve with very restrictive iterations (should stop early, suboptimal)
+    (x_restricted,) = layer(A_th, b_th, solver_args={"max_iters": 1})
+
+    # Solve with proper iterations (should converge to optimal)
+    (x_optimal,) = layer(A_th, b_th, solver_args={"max_iters": 10000, "eps": 1e-10})
+
+    # The solutions should differ if solver_args were actually used
+    # With only 1 iteration, the solution should be far from optimal
+    diff = torch.norm(x_restricted - x_optimal).item()
+    assert diff > 1e-3, (
+        f"Solutions with max_iters=1 and max_iters=10000 are too similar (diff={diff}). "
+        "This suggests solver_args are not being passed to the solver."
+    )
+
+    # The optimal solution should have much lower objective value
+    obj_restricted = (
+        torch.sum((A_th @ x_restricted - b_th) ** 2) + 0.01 * torch.sum(x_restricted**2)
+    ).item()
+    obj_optimal = (
+        torch.sum((A_th @ x_optimal - b_th) ** 2) + 0.01 * torch.sum(x_optimal**2)
+    ).item()
+
+    assert obj_optimal < obj_restricted, (
+        f"Optimal objective ({obj_optimal}) should be less than restricted ({obj_restricted}). "
+        "This suggests solver_args are not being used properly."
+    )

@@ -136,7 +136,10 @@ def parse_args(
     variables: list[cp.Variable],
     parameters: list[cp.Parameter],
     solver: str | None,
-    kwargs: dict[str, Any],
+    gp: bool = False,
+    verbose: bool = False,
+    canon_backend: str | None = None,
+    solver_args: dict[str, Any] | None = None,
 ) -> LayersContext:
     if not problem.is_dcp(dpp=True):  # type: ignore[call-arg]
         raise ValueError("Problem must be DPP.")
@@ -152,7 +155,9 @@ def parse_args(
 
     if solver is None:
         solver = "DIFFCP"
-    data, _, _ = problem.get_problem_data(solver=solver, **kwargs)
+    data, _, _ = problem.get_problem_data(
+        solver=solver, gp=gp, verbose=verbose, canon_backend=canon_backend, solver_opts=solver_args
+    )
     param_prob = data[cp.settings.PARAM_PROB]  # type: ignore[attr-defined]
     cone_dims = data["dims"]
 
@@ -161,7 +166,7 @@ def parse_args(
         param_prob,
         cone_dims,
         data,
-        kwargs,
+        solver_args,
     )
     user_order_to_col = {
         i: col
