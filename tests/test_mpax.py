@@ -4,6 +4,7 @@ import cvxpy as cp
 import numpy as np
 import pytest
 import torch
+from cvxpy.error import SolverError
 
 from cvxpylayers.torch import CvxpyLayer
 
@@ -178,3 +179,33 @@ def test_least_squares_with_constraints():
     b_val = np.random.randn(m)
 
     compare_solvers(problem, [A, b], [A_val, b_val], [x])
+
+
+def test_soc_problem_rejected():
+    """Test that MPAX rejects second-order cone problems."""
+    # Problem with norm (SOC constraint)
+    x = cp.Variable(3)
+    problem = cp.Problem(cp.Minimize(cp.norm(x, 2)), [x >= 0])
+
+    with pytest.raises(SolverError, match="could not be reduced to a QP"):
+        CvxpyLayer(problem, [], [x], solver="MPAX")
+
+
+def test_exponential_cone_rejected():
+    """Test that MPAX rejects exponential cone problems."""
+    # Problem with logarithm (exponential cone)
+    x = cp.Variable()
+    problem = cp.Problem(cp.Minimize(-cp.log(x)), [x >= 0.1])
+
+    with pytest.raises(SolverError, match="could not be reduced to a QP"):
+        CvxpyLayer(problem, [], [x], solver="MPAX")
+
+
+def test_sdp_rejected():
+    """Test that MPAX rejects semidefinite programming problems."""
+    # Problem with PSD constraint
+    X = cp.Variable((3, 3), PSD=True)
+    problem = cp.Problem(cp.Minimize(cp.trace(X)))
+
+    with pytest.raises(SolverError, match="could not be reduced to a QP"):
+        CvxpyLayer(problem, [], [X], solver="MPAX")
