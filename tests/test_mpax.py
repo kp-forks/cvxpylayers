@@ -79,6 +79,67 @@ def compare_solvers(problem, params, param_vals, variables):
         )
 
 
+def compare_solvers_batched(problem, params, param_vals_batch, variables):
+    """Compare MPAX vs DIFFCP for batched inputs."""
+    batch_size = param_vals_batch[0].shape[0]
+
+    # Convert to torch tensors (with batch dimension)
+    param_tensors = [torch.tensor(v, requires_grad=True) for v in param_vals_batch]
+
+    # Test DIFFCP with batched inputs
+    layer_diffcp = CvxpyLayer(problem, params, variables, solver="DIFFCP")
+    sols_diffcp = layer_diffcp(*param_tensors)
+
+    # Test MPAX with batched inputs
+    layer_mpax = CvxpyLayer(problem, params, variables, solver="MPAX")
+    sols_mpax = layer_mpax(*[torch.tensor(v, requires_grad=True) for v in param_vals_batch])
+
+    # Compare solutions for each batch element
+    for batch_idx in range(batch_size):
+        # Extract parameter values for this batch element
+        param_vals_single = [v[batch_idx] for v in param_vals_batch]
+
+        # Solve with CVXPY as ground truth
+        for param, val in zip(params, param_vals_single, strict=True):
+            param.value = val.numpy() if hasattr(val, "numpy") else val
+        problem.solve()
+        assert problem.status == "optimal", f"Batch {batch_idx}: CVXPY failed"
+
+        true_sol = [v.value for v in variables]
+        true_obj = problem.value
+
+        # Compare DIFFCP for this batch element
+        for var, sol in zip(variables, sols_diffcp, strict=True):
+            var.value = sol[batch_idx].detach().numpy()
+        diffcp_obj = problem.objective.value
+
+        # Compare MPAX for this batch element
+        for param, val in zip(params, param_vals_single, strict=True):
+            param.value = val.numpy() if hasattr(val, "numpy") else val
+        for var, sol in zip(variables, sols_mpax, strict=True):
+            var.value = sol[batch_idx].detach().numpy()
+        mpax_obj = problem.objective.value
+
+        # Compare objectives
+        obj_err = abs(mpax_obj - true_obj)
+        diffcp_vs_mpax = abs(mpax_obj - diffcp_obj)
+
+        assert obj_err < 1e-3, f"Batch {batch_idx}: MPAX error={obj_err:.6f}"
+        assert diffcp_vs_mpax < 1e-3, f"Batch {batch_idx}: diff={diffcp_vs_mpax:.6f}"
+
+        # Compare primal solutions
+        for i, (sol_mpax, sol_diffcp, sol_true) in enumerate(
+            zip(sols_mpax, sols_diffcp, true_sol, strict=True)
+        ):
+            mpax_err = np.linalg.norm(sol_mpax[batch_idx].detach().numpy() - sol_true)
+            assert mpax_err < 1e-3, f"Batch {batch_idx}, var {i}: ||MPAX - true|| = {mpax_err:.6e}"
+
+            primal_diff = torch.norm(sol_mpax[batch_idx] - sol_diffcp[batch_idx]).item()
+            assert primal_diff < 1e-3, (
+                f"Batch {batch_idx}, var {i}: ||MPAX - DIFFCP|| = {primal_diff:.6e}"
+            )
+
+
 def test_equality_only():
     """Test with only equality constraints."""
     # minimize x^T x subject to Ax = b
@@ -179,6 +240,120 @@ def test_least_squares_with_constraints():
     b_val = np.random.randn(m)
 
     compare_solvers(problem, [A, b], [A_val, b_val], [x])
+
+
+def test_equality_only_batched():
+    """Test batched inputs with only equality constraints."""
+    # minimize x^T x subject to Ax = b
+    n, m = 5, 2
+    batch_size = 3
+    x = cp.Variable(n)
+    A = cp.Parameter((m, n))
+    b = cp.Parameter(m)
+
+    problem = cp.Problem(cp.Minimize(cp.sum_squares(x)), [A @ x == b])
+
+    np.random.seed(100)
+    # Create batched parameter values
+    A_val_batch = np.random.randn(batch_size, m, n)
+    b_val_batch = np.random.randn(batch_size, m)
+
+    compare_solvers_batched(problem, [A, b], [A_val_batch, b_val_batch], [x])
+
+
+def test_inequality_only_batched():
+    """Test batched inputs with only inequality constraints."""
+    # minimize (x-1)^2 subject to x >= a
+    x = cp.Variable(1)
+    a = cp.Parameter(1)
+
+    problem = cp.Problem(cp.Minimize(cp.sum_squares(x - 1)), [x >= a])
+
+    # Create batched parameter values (batch_size = 4)
+    a_val_batch = np.array([[0.5], [0.2], [0.8], [-0.5]])
+
+    compare_solvers_batched(problem, [a], [a_val_batch], [x])
+
+
+def test_mixed_constraints_batched():
+    """Test batched inputs with both equality and inequality constraints."""
+    # minimize x^T x subject to Ax = b, Gx >= h
+    n = 3
+    batch_size = 2
+    x = cp.Variable(n)
+    A = cp.Parameter((1, n))
+    b = cp.Parameter(1)
+    G = cp.Parameter((2, n))
+    h = cp.Parameter(2)
+
+    problem = cp.Problem(cp.Minimize(cp.sum_squares(x)), [A @ x == b, G @ x >= h])
+
+    np.random.seed(200)
+    # Create batched parameter values
+    A_val_batch = np.array([[[1.0, 1.0, 1.0]], [[1.0, 0.5, 0.5]]])
+    b_val_batch = np.array([[3.0], [2.0]])
+    G_val_batch = np.tile(np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]), (batch_size, 1, 1))
+    h_val_batch = np.tile(np.array([0.0, 0.0]), (batch_size, 1))
+
+    compare_solvers_batched(
+        problem, [A, b, G, h], [A_val_batch, b_val_batch, G_val_batch, h_val_batch], [x]
+    )
+
+
+def test_box_constraints_batched():
+    """Test batched inputs with box constraints (variable bounds)."""
+    # minimize (x-target)^T(x-target) subject to 0 <= x <= 1
+    n = 3
+    x = cp.Variable(n)
+    target = cp.Parameter(n)
+
+    problem = cp.Problem(cp.Minimize(cp.sum_squares(x - target)), [x >= 0, x <= 1])
+
+    # Create batched parameter values (batch_size = 3)
+    target_val_batch = np.array([[2.0, 0.5, -1.0], [0.5, 0.5, 0.5], [1.5, -0.5, 2.0]])
+
+    compare_solvers_batched(problem, [target], [target_val_batch], [x])
+
+
+def test_mixed_batched_unbatched():
+    """Test mixing batched and unbatched parameters (broadcasting)."""
+    # minimize x^T x subject to Ax = b, where A is unbatched and b is batched
+    n, m = 4, 2
+    batch_size = 3
+    x = cp.Variable(n)
+    A = cp.Parameter((m, n))
+    b = cp.Parameter(m)
+
+    problem = cp.Problem(cp.Minimize(cp.sum_squares(x)), [A @ x == b])
+
+    np.random.seed(300)
+    # A is unbatched (same for all batch elements)
+    A_val = np.random.randn(m, n)
+    # b is batched (different for each batch element)
+    b_val_batch = np.random.randn(batch_size, m)
+
+    # Convert to torch tensors
+    A_tensor = torch.tensor(A_val, requires_grad=True)  # Unbatched
+    b_tensor = torch.tensor(b_val_batch, requires_grad=True)  # Batched
+
+    # Test MPAX
+    layer_mpax = CvxpyLayer(problem, [A, b], [x], solver="MPAX")
+    sols_mpax = layer_mpax(A_tensor, b_tensor)
+
+    # Test DIFFCP for comparison
+    layer_diffcp = CvxpyLayer(problem, [A, b], [x], solver="DIFFCP")
+    sols_diffcp = layer_diffcp(
+        torch.tensor(A_val, requires_grad=True), torch.tensor(b_val_batch, requires_grad=True)
+    )
+
+    # Verify batch size is correct
+    assert sols_mpax[0].shape[0] == batch_size, "MPAX output should have batch dimension"
+    assert sols_diffcp[0].shape[0] == batch_size, "DIFFCP output should have batch dimension"
+
+    # Compare MPAX vs DIFFCP for each batch element
+    for batch_idx in range(batch_size):
+        primal_diff = torch.norm(sols_mpax[0][batch_idx] - sols_diffcp[0][batch_idx]).item()
+        assert primal_diff < 1e-3, f"Batch {batch_idx}: ||MPAX - DIFFCP|| = {primal_diff:.6e}"
 
 
 def test_soc_problem_rejected():

@@ -100,64 +100,26 @@ class MPAX_ctx:
         quad_obj_values,
         lin_obj_values,
         con_values,
-    ):  # TODO: Add broadcasting  (will need jnp.tile to tile structures)
-        # Sign conventions for cvxpylayers vs CVXPY solver interface:
-        # cvxpylayers gets data from param_prob.reduced_A with different signs than
-        # CVXPY's solver interface (data[s.A], data[s.B], etc.)
-        # The correct convention is: negate b and h, but NOT A or G
+    ):
+        # Detect batch size and whether input was originally unbatched
+        if con_values.ndim == 1:
+            originally_unbatched = True
+            batch_size = 1
+            # Add batch dimension for uniform handling
+            con_values = jnp.expand_dims(con_values, axis=1)
+            lin_obj_values = jnp.expand_dims(lin_obj_values, axis=1)
+            quad_obj_values = jnp.expand_dims(quad_obj_values, axis=1)
+        else:
+            originally_unbatched = False
+            batch_size = con_values.shape[1]
 
-        # CVXPY stores constraint data in reduced_A with structure:
-        #   [A | b]  <- equality constraints (dims.zero rows)
-        #   [G | h]  <- inequality constraints (m - dims.zero rows)
-        # The last column contains RHS values [b; h] stored sparsely (explicit zeros removed).
-        # We need to reconstruct dense b and h vectors.
-
-        rhs_sparse_values = con_values[self.last_col_start : self.last_col_end]
-        rhs_row_indices = self.last_col_indices  # Which rows have nonzero RHS values
-
-        num_eq_constraints = self.A_shape[0]  # dims.zero
-        num_ineq_constraints = self.G_shape[0]  # m - dims.zero
-
-        # Split RHS values by constraint type:
-        # - Row indices < num_eq_constraints belong to b (equalities)
-        # - Row indices >= num_eq_constraints belong to h (inequalities)
-        split_at = jnp.searchsorted(rhs_row_indices, num_eq_constraints)
-
-        b_row_indices = rhs_row_indices[:split_at]
-        b_sparse_values = rhs_sparse_values[:split_at]
-
-        h_row_indices = rhs_row_indices[split_at:] - num_eq_constraints  # Re-index from 0
-        h_sparse_values = rhs_sparse_values[split_at:]
-
-        # Reconstruct dense vectors (filling missing rows with zeros)
-        b_vals = jnp.zeros(num_eq_constraints)
-        h_vals = jnp.zeros(num_ineq_constraints)
-
-        b_vals = b_vals.at[b_row_indices].set(-b_sparse_values)  # Negate b
-        h_vals = h_vals.at[h_row_indices].set(-h_sparse_values)  # Negate h
-
-        model = mpax.create_qp(
-            P := jax.experimental.sparse.BCSR(
-                (quad_obj_values[self.Q_idxs], *self.Q_structure),
-                shape=self.Q_shape,
-            ),
-            q := lin_obj_values[self.c_slice],
-            A := jax.experimental.sparse.BCSR(
-                (con_values[self.A_idxs], *self.A_structure),
-                shape=self.A_shape,
-            ),
-            b := b_vals,
-            G := jax.experimental.sparse.BCSR(
-                (con_values[self.G_idxs], *self.G_structure),
-                shape=self.G_shape,
-            ),
-            h := h_vals,
-            self.l,
-            self.u,
-        )
         return MPAX_data(
-            model,
-            self.solver,
+            ctx=self,
+            quad_obj_values=quad_obj_values,
+            lin_obj_values=lin_obj_values,
+            con_values=con_values,
+            batch_size=batch_size,
+            originally_unbatched=originally_unbatched,
         )
 
     def torch_to_data(
@@ -165,11 +127,7 @@ class MPAX_ctx:
         quad_obj_values,
         lin_obj_values,
         con_values,
-    ) -> "MPAX_data":  # TODO: Add broadcasting  (will need jnp.tile to tile structures)
-        # MPAX doesn't support batching yet - verify input is unbatched
-        if con_values.dim() == 2:
-            raise NotImplementedError("MPAX does not support batched inputs yet")
-
+    ) -> "MPAX_data":
         return self.jax_to_data(
             jnp.array(quad_obj_values),
             jnp.array(lin_obj_values),
@@ -179,29 +137,91 @@ class MPAX_ctx:
 
 @dataclass
 class MPAX_data:
-    model: mpax.utils.QuadraticProgrammingProblem
-    solver: Callable
+    ctx: "MPAX_ctx"  # Reference to context with structure info
+    quad_obj_values: jnp.ndarray  # Shape: (n_Q,) or (n_Q, batch_size)
+    lin_obj_values: jnp.ndarray  # Shape: (n,) or (n, batch_size)
+    con_values: jnp.ndarray  # Shape: (n_con,) or (n_con, batch_size)
+    batch_size: int
+    originally_unbatched: bool
 
     def jax_solve(self):
-        def solver(model):
-            solution = self.solver(model)
+        def solve_single_batch(quad_obj_vals_i, lin_obj_vals_i, con_vals_i):
+            """Build model and solve for a single batch element."""
+            # Extract RHS values and reconstruct b and h vectors
+            # (same logic as old jax_to_data, but for single batch element)
+            rhs_sparse_values = con_vals_i[self.ctx.last_col_start : self.ctx.last_col_end]
+            rhs_row_indices = self.ctx.last_col_indices
+
+            num_eq_constraints = self.ctx.A_shape[0]
+            num_ineq_constraints = self.ctx.G_shape[0]
+
+            split_at = jnp.searchsorted(rhs_row_indices, num_eq_constraints)
+
+            b_row_indices = rhs_row_indices[:split_at]
+            b_sparse_values = rhs_sparse_values[:split_at]
+
+            h_row_indices = rhs_row_indices[split_at:] - num_eq_constraints
+            h_sparse_values = rhs_sparse_values[split_at:]
+
+            b_vals = jnp.zeros(num_eq_constraints)
+            h_vals = jnp.zeros(num_ineq_constraints)
+
+            b_vals = b_vals.at[b_row_indices].set(-b_sparse_values)
+            h_vals = h_vals.at[h_row_indices].set(-h_sparse_values)
+
+            # Build QP model
+            model = mpax.create_qp(
+                jax.experimental.sparse.BCSR(
+                    (quad_obj_vals_i[self.ctx.Q_idxs], *self.ctx.Q_structure),
+                    shape=self.ctx.Q_shape,
+                ),
+                lin_obj_vals_i[self.ctx.c_slice],
+                jax.experimental.sparse.BCSR(
+                    (con_vals_i[self.ctx.A_idxs], *self.ctx.A_structure),
+                    shape=self.ctx.A_shape,
+                ),
+                b_vals,
+                jax.experimental.sparse.BCSR(
+                    (con_vals_i[self.ctx.G_idxs], *self.ctx.G_structure),
+                    shape=self.ctx.G_shape,
+                ),
+                h_vals,
+                self.ctx.l,
+                self.ctx.u,
+            )
+
+            # Solve
+            solution = self.ctx.solver(model)
             return solution.primal_solution, solution.dual_solution
 
-        solution, fun = jax.vjp(solver, self.model)
-        return *solution, fun
+        # Vectorize over batch dimension (axis 1 of parameter arrays)
+        solve_batched = jax.vmap(solve_single_batch, in_axes=(1, 1, 1))
+
+        def batched_solver(quad_vals, lin_vals, con_vals):
+            return solve_batched(quad_vals, lin_vals, con_vals)
+
+        # Compute forward pass and VJP function
+        (primal, dual), vjp_fun = jax.vjp(
+            batched_solver,
+            self.quad_obj_values,
+            self.lin_obj_values,
+            self.con_values,
+        )
+
+        return primal, dual, vjp_fun
 
     def torch_solve(self, solver_args=None):
         import torch
 
-        primal, dual, fun = self.jax_solve()
-        # Convert JAX arrays to PyTorch tensors and add batch dimension
-        # (matching DIFFCP's behavior which stacks results)
-        primal_torch = torch.utils.dlpack.from_dlpack(primal).unsqueeze(0)  # Shape: (1, n)
-        dual_torch = torch.utils.dlpack.from_dlpack(dual).unsqueeze(0)  # Shape: (1, m)
+        primal, dual, vjp_fun = self.jax_solve()
+        # Convert JAX arrays to PyTorch tensors
+        # jax_solve returns shapes: (batch_size, n) and (batch_size, m)
+        primal_torch = torch.utils.dlpack.from_dlpack(primal)
+        dual_torch = torch.utils.dlpack.from_dlpack(dual)
         return (
             primal_torch,
             dual_torch,
-            fun,
+            vjp_fun,
         )
 
     def jax_derivative(self, primal, dual, fun):
