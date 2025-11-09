@@ -86,6 +86,24 @@ class MPAX_ctx:
         self.warm_start = options.pop("warm_start", False)
         assert self.warm_start is False
         algorithm = options.pop("algorithm", "raPDHG")
+
+        # Set defaults for differentiability:
+        # - adaptive_step_size=True: uses max(|matrix|) instead of spectral norm
+        # - scale_invariant_initial_primal_weight=False: avoids spectral norm computation
+        # - unroll=True: enables gradient flow through solver iterations
+        options.setdefault("adaptive_step_size", True)
+        options.setdefault("scale_invariant_initial_primal_weight", False)
+        options.setdefault("unroll", True)
+
+        print("=" * 60)
+        print("MPAX Solver Options:")
+        print(f"  adaptive_step_size: {options.get('adaptive_step_size')}")
+        print(f"  scale_invariant_initial_primal_weight: {options.get('scale_invariant_initial_primal_weight')}")
+        print(f"  unroll: {options.get('unroll')}")
+        print(f"  iteration_limit: {options.get('iteration_limit', 'default')}")
+        print(f"  All options: {options}")
+        print("=" * 60)
+
         if algorithm == "raPDHG":
             alg = mpax.raPDHG
         elif algorithm == "r2HPDHG":
@@ -93,7 +111,8 @@ class MPAX_ctx:
         else:
             raise ValueError("Invalid MPAX algorithm")
         solver = alg(warm_start=self.warm_start, **options)
-        self.solver = jax.jit(solver.optimize)
+        # self.solver = jax.jit(solver.optimize)
+        self.solver = solver.optimize
 
     def jax_to_data(
         self,
