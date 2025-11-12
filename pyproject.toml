@@ -140,6 +140,7 @@ select = [
     "F",      # pyflakes
     "I",      # isort (import sorting)
     "W605",   # invalid escape sequences in docstrings
+    "PT",     # pytest-style (flake8-pytest-style)
 ]
 
 ignore = [

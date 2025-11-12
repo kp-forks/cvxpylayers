@@ -1,7 +1,7 @@
 {
   "include": [
     "src/cvxpylayers",
-    "tests/test_parse_args.py"
+    "tests"
   ],
   "exclude": [
     "**/__pycache__",
