@@ -149,6 +149,13 @@ class MPAX_data:
     originally_unbatched: bool
 
     def jax_solve(self, solver_args=None):
+        if solver_args is None:
+            solver_args = {}
+
+        # Extract warm start options if provided
+        initial_primal = solver_args.get("initial_primal_solution", None)
+        initial_dual = solver_args.get("initial_dual_solution", None)
+
         def solve_single_batch(quad_obj_vals_i, lin_obj_vals_i, con_vals_i):
             """Build model and solve for a single batch element."""
             # Extract RHS values and reconstruct b and h vectors
@@ -195,8 +202,12 @@ class MPAX_data:
                 self.ctx.upper,
             )
 
-            # Solve
-            solution = self.ctx.solver(model)
+            # Solve with optional warm start
+            solution = self.ctx.solver(
+                model,
+                initial_primal_solution=initial_primal,
+                initial_dual_solution=initial_dual,
+            )
             return solution.primal_solution, solution.dual_solution
 
         # Vectorize over batch dimension (axis 1 of parameter arrays)
@@ -218,7 +229,7 @@ class MPAX_data:
     def torch_solve(self, solver_args=None):
         import torch
 
-        primal, dual, vjp_fun = self.jax_solve()
+        primal, dual, vjp_fun = self.jax_solve(solver_args)
         # Convert JAX arrays to PyTorch tensors
         # jax_solve returns shapes: (batch_size, n) and (batch_size, m)
         primal_torch = torch.utils.dlpack.from_dlpack(primal)
