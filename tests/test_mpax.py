@@ -225,7 +225,7 @@ def test_qp_with_linear_objective():
     compare_solvers(problem, [q, A, b], [q_val, A_val, b_val], [x])
 
 
-def test_least_squares_with_constraints():
+def test_least_squares_with_regularization():
     """Test least squares with constraints (original failing test)."""
     # minimize ||Ax - b||^2 + ||x||^2
     n, m = 3, 4
