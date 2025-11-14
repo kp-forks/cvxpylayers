@@ -29,8 +29,8 @@ class MPAX_ctx:
     G_structure: tuple[jnp.ndarray, jnp.ndarray]
     G_shape: tuple[int, int]
 
-    l: jnp.ndarray
-    u: jnp.ndarray
+    lower: jnp.ndarray
+    upper: jnp.ndarray
 
     solver: Callable
 
@@ -61,7 +61,7 @@ class MPAX_ctx:
         # explicit zeros, so we need to reconstruct the full dense vectors
         self.last_col_start = con_ptr[-2]
         self.last_col_end = con_ptr[-1]
-        self.last_col_indices = con_indices[self.last_col_start:self.last_col_end]
+        self.last_col_indices = con_indices[self.last_col_start : self.last_col_end]
         self.m = m  # Total number of constraint rows
 
         con_csr = sp.csc_array(
@@ -78,8 +78,11 @@ class MPAX_ctx:
         self.G_structure = con_csr.indices[split:], con_csr.indptr[dims.zero :] - split
         self.G_shape = (m - dims.zero, n)
 
-        self.l = lower_bounds if lower_bounds is not None else -jnp.inf * jnp.ones(n)
-        self.u = upper_bounds if upper_bounds is not None else jnp.inf * jnp.ones(n)
+        self.lower = lower_bounds if lower_bounds is not None else -jnp.inf * jnp.ones(n)
+        self.upper = upper_bounds if upper_bounds is not None else jnp.inf * jnp.ones(n)
+
+        # Precompute split_at to avoid binary search on every solve
+        self.split_at = int(jnp.searchsorted(self.last_col_indices, dims.zero))
 
         if options is None:
             options = {}
@@ -156,7 +159,8 @@ class MPAX_data:
             num_eq_constraints = self.ctx.A_shape[0]
             num_ineq_constraints = self.ctx.G_shape[0]
 
-            split_at = jnp.searchsorted(rhs_row_indices, num_eq_constraints)
+            # Use precomputed split_at from context
+            split_at = self.ctx.split_at
 
             b_row_indices = rhs_row_indices[:split_at]
             b_sparse_values = rhs_sparse_values[:split_at]
@@ -187,8 +191,8 @@ class MPAX_data:
                     shape=self.ctx.G_shape,
                 ),
                 h_vals,
-                self.ctx.l,
-                self.ctx.u,
+                self.ctx.lower,
+                self.ctx.upper,
             )
 
             # Solve
@@ -241,4 +245,9 @@ class MPAX_data:
         quad, lin, con = self.jax_derivative(
             jnp.array(primal_unbatched), jnp.array(dual_unbatched), adj_batch
         )
-        return torch.tensor(quad), torch.tensor(lin), torch.tensor(con)
+        # Use DLpack for JAX to PyTorch conversion to avoid read-only flag errors
+        return (
+            torch.utils.dlpack.from_dlpack(quad),
+            torch.utils.dlpack.from_dlpack(lin),
+            torch.utils.dlpack.from_dlpack(con),
+        )

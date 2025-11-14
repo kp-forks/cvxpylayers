@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
 import cvxpy as cp
 import scipy.sparse
@@ -8,6 +8,8 @@ import cvxpylayers.interfaces
 
 if TYPE_CHECKING:
     import torch
+
+T = TypeVar("T")
 
 
 class SolverData(Protocol):
@@ -53,12 +55,12 @@ class VariableRecovery:
     primal: slice | None
     dual: slice | None
 
-    def recover(self, primal_sol: Any, dual_sol: Any) -> Any:
+    def recover(self, primal_sol: T, dual_sol: T) -> T:
         if self.primal is not None:
             # Use ellipsis slicing to handle both batched and unbatched
-            return primal_sol[..., self.primal]
+            return primal_sol[..., self.primal]  # type: ignore[index]
         if self.dual is not None:
-            return dual_sol[..., self.dual]
+            return dual_sol[..., self.dual]  # type: ignore[index]
         raise RuntimeError(
             "Invalid VariableRecovery: both primal and dual slices are None. "
             "At least one must be set to recover variable values."
