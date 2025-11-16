@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import diffcp
 import numpy as np
@@ -17,8 +17,14 @@ try:
 except ImportError:
     torch = None  # type: ignore[assignment]
 
+if TYPE_CHECKING:
+    # Type alias for multi-framework tensor types
+    TensorLike = torch.Tensor | jnp.ndarray | np.ndarray
+else:
+    TensorLike = Any
 
-def _detect_batch_size(con_values: Any) -> tuple[int, bool]:
+
+def _detect_batch_size(con_values: TensorLike) -> tuple[int, bool]:
     """Detect batch size and whether input was originally unbatched.
 
     Handles both PyTorch tensors and JAX arrays by checking the number
@@ -33,7 +39,7 @@ def _detect_batch_size(con_values: Any) -> tuple[int, bool]:
             - originally_unbatched: True if input had no batch dimension
     """
     # Handle both torch tensors (.dim()) and jax/numpy arrays (.ndim)
-    ndim = con_values.dim() if hasattr(con_values, "dim") else con_values.ndim
+    ndim = con_values.dim() if hasattr(con_values, "dim") else con_values.ndim  # type: ignore[attr-defined]
 
     if ndim == 1:
         return 1, True  # Unbatched input
@@ -42,8 +48,8 @@ def _detect_batch_size(con_values: Any) -> tuple[int, bool]:
 
 
 def _build_diffcp_matrices(
-    con_values: Any,
-    lin_obj_values: Any,
+    con_values: TensorLike,
+    lin_obj_values: TensorLike,
     A_structure: tuple[np.ndarray, np.ndarray],
     A_shape: tuple[int, int],
     b_idx: np.ndarray,
@@ -188,8 +194,8 @@ class DIFFCP_ctx:
 
 def _compute_gradients(
     adj_batch: Callable,
-    dprimal: Any,
-    ddual: Any,
+    dprimal: TensorLike,
+    ddual: TensorLike,
     bs: list[np.ndarray],
     b_idxs: list[np.ndarray],
     batch_size: int,

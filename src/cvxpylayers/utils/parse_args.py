@@ -3,6 +3,8 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
 import cvxpy as cp
 import scipy.sparse
+from cvxpy.reductions.dcp2cone.cone_matrix_stuffing import ParamConeProg
+from cvxpy.reductions.solvers.solving_chain import SolvingChain
 
 import cvxpylayers.interfaces
 
@@ -180,7 +182,7 @@ def _validate_problem(
 
 
 def _extract_gp_param_mapping(
-    gp: bool, solving_chain: Any
+    gp: bool, solving_chain: SolvingChain | None
 ) -> dict[cp.Parameter, cp.Parameter] | None:
     """Extract GP parameter to log-space DCP parameter mapping.
 
@@ -195,7 +197,7 @@ def _extract_gp_param_mapping(
     Returns:
         Mapping from GP parameters to log-space DCP parameters, or None if not GP
     """
-    if not gp:
+    if not gp or solving_chain is None:
         return None
 
     dgp2dcp = solving_chain.get(cp.reductions.Dgp2Dcp)  # type: ignore[reportAttributeAccessIssue]
@@ -207,7 +209,7 @@ def _extract_gp_param_mapping(
 
 def _build_user_order_mapping(
     parameters: list[cp.Parameter],
-    param_prob: Any,
+    param_prob: ParamConeProg,
     gp: bool,
     gp_param_to_log_param: dict[cp.Parameter, cp.Parameter] | None,
 ) -> dict[int, int]:
