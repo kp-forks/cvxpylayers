@@ -138,21 +138,29 @@ class LayersContext:
         return ()
 
 
-def parse_args(
+def _validate_problem(
     problem: cp.Problem,
     variables: list[cp.Variable],
     parameters: list[cp.Parameter],
-    solver: str | None,
-    gp: bool = False,
-    verbose: bool = False,
-    canon_backend: str | None = None,
-    solver_args: dict[str, Any] | None = None,
-) -> LayersContext:
-    # Validate problem is DPP (disciplined parametrized programming)
+    gp: bool,
+) -> None:
+    """Validate that the problem is DPP-compliant and inputs are well-formed.
+
+    Args:
+        problem: CVXPY problem to validate
+        variables: List of CVXPY variables to track
+        parameters: List of CVXPY parameters
+        gp: Whether this is a geometric program (GP)
+
+    Raises:
+        ValueError: If problem is not DPP-compliant or inputs are invalid
+    """
+    # Check if problem follows disciplined parametrized programming (DPP) rules
     if gp:
         if not problem.is_dgp(dpp=True):  # type: ignore[call-arg]
             raise ValueError("Problem must be DPP for geometric programming.")
         # GP requires initial values for all parameters
+        # TODO update CVXPY so initial values are not necessary for cvxpylayers GPs.
         for param in parameters:
             if param.value is None:
                 raise ValueError("An initial value for each parameter is required when gp=True.")
@@ -160,6 +168,7 @@ def parse_args(
         if not problem.is_dcp(dpp=True):  # type: ignore[call-arg]
             raise ValueError("Problem must be DPP.")
 
+    # Validate parameters match problem definition
     if not set(problem.parameters()) == set(parameters):
         raise ValueError("The layer's parameters must exactly match problem.parameters")
     if not set(variables).issubset(set(problem.variables())):
@@ -169,31 +178,54 @@ def parse_args(
     if not isinstance(variables, list) and not isinstance(variables, tuple):
         raise ValueError("The layer's variables must be provided as a list or tuple")
 
-    if solver is None:
-        solver = "DIFFCP"
-    data, solving_chain, _ = problem.get_problem_data(
-        solver=solver, gp=gp, verbose=verbose, canon_backend=canon_backend, solver_opts=solver_args
-    )
-    param_prob = data[cp.settings.PARAM_PROB]  # type: ignore[attr-defined]
-    cone_dims = data["dims"]
 
-    # Extract GP information if this is a geometric program
-    gp_param_to_log_param = None
-    if gp:
-        dgp2dcp = solving_chain.get(cp.reductions.Dgp2Dcp)  # type: ignore[reportAttributeAccessIssue]
-        if dgp2dcp is not None:
-            # dgp2dcp.canon_methods._parameters maps original GP params to log-space DCP params
-            gp_param_to_log_param = dgp2dcp.canon_methods._parameters
+def _extract_gp_param_mapping(
+    gp: bool, solving_chain: Any
+) -> dict[cp.Parameter, cp.Parameter] | None:
+    """Extract GP parameter to log-space DCP parameter mapping.
 
-    solver_ctx = cvxpylayers.interfaces.get_solver_ctx(
-        solver,
-        param_prob,
-        cone_dims,
-        data,
-        solver_args,
-    )
+    For geometric programs (GP), CVXPY converts the problem to a DCP by
+    applying log transformation. This extracts the mapping from original
+    GP parameters to their log-space DCP equivalents.
 
-    # Build parameter ordering mapping
+    Args:
+        gp: Whether this is a geometric program
+        solving_chain: CVXPY's solving chain containing reduction info
+
+    Returns:
+        Mapping from GP parameters to log-space DCP parameters, or None if not GP
+    """
+    if not gp:
+        return None
+
+    dgp2dcp = solving_chain.get(cp.reductions.Dgp2Dcp)  # type: ignore[reportAttributeAccessIssue]
+    if dgp2dcp is not None:
+        # dgp2dcp.canon_methods._parameters maps original GP params to log-space DCP params
+        return dgp2dcp.canon_methods._parameters
+    return None
+
+
+def _build_user_order_mapping(
+    parameters: list[cp.Parameter],
+    param_prob: Any,
+    gp: bool,
+    gp_param_to_log_param: dict[cp.Parameter, cp.Parameter] | None,
+) -> dict[int, int]:
+    """Build mapping from user parameter order to column order.
+
+    CVXPY internally reorders parameters when canonicalizing problems. This
+    creates a mapping from the user's parameter order to the internal column
+    order used in the canonical form.
+
+    Args:
+        parameters: List of CVXPY parameters in user order
+        param_prob: CVXPY's parametrized problem object
+        gp: Whether this is a geometric program
+        gp_param_to_log_param: Mapping from GP params to log-space DCP params
+
+    Returns:
+        Dictionary mapping user parameter index to column order index
+    """
     # For GP problems, we need to use the log-space DCP parameter IDs
     if gp and gp_param_to_log_param:
         # Map user order index to column using log-space DCP parameters
@@ -211,9 +243,54 @@ def parse_args(
                 [(param_prob.param_id_to_col[p.id], i) for i, p in enumerate(parameters)],
             )
         }
+
+    # Convert column indices to sequential order mapping
     user_order_to_col_order = {}
     for j, i in enumerate(user_order_to_col.keys()):
         user_order_to_col_order[i] = j
+
+    return user_order_to_col_order
+
+
+def parse_args(
+    problem: cp.Problem,
+    variables: list[cp.Variable],
+    parameters: list[cp.Parameter],
+    solver: str | None,
+    gp: bool = False,
+    verbose: bool = False,
+    canon_backend: str | None = None,
+    solver_args: dict[str, Any] | None = None,
+) -> LayersContext:
+    # Validate problem is DPP (disciplined parametrized programming)
+    _validate_problem(problem, variables, parameters, gp)
+
+    if solver is None:
+        solver = "DIFFCP"
+
+    # Get problem data from CVXPY
+    data, solving_chain, _ = problem.get_problem_data(
+        solver=solver, gp=gp, verbose=verbose, canon_backend=canon_backend, solver_opts=solver_args
+    )
+    param_prob = data[cp.settings.PARAM_PROB]  # type: ignore[attr-defined]
+    cone_dims = data["dims"]
+
+    # Extract GP parameter mapping if needed
+    gp_param_to_log_param = _extract_gp_param_mapping(gp, solving_chain)
+
+    # Create solver context
+    solver_ctx = cvxpylayers.interfaces.get_solver_ctx(
+        solver,
+        param_prob,
+        cone_dims,
+        data,
+        solver_args,
+    )
+
+    # Build parameter ordering mapping
+    user_order_to_col_order = _build_user_order_mapping(
+        parameters, param_prob, gp, gp_param_to_log_param
+    )
 
     q = getattr(param_prob, "q", getattr(param_prob, "c", None))
 

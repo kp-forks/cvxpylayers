@@ -9,6 +9,122 @@ import scipy.sparse
 import cvxpylayers.utils.parse_args as pa
 
 
+def _apply_gp_log_transform(
+    params: tuple[jnp.ndarray, ...],
+    ctx: pa.LayersContext,
+) -> tuple[jnp.ndarray, ...]:
+    """Apply log transformation to geometric program (GP) parameters.
+
+    Geometric programs are solved in log-space after conversion to DCP.
+    This function applies log transformation to the appropriate parameters.
+
+    Args:
+        params: Tuple of parameter arrays in original GP space
+        ctx: Layer context containing GP parameter mapping info
+
+    Returns:
+        Tuple of transformed parameters (log-space for GP params, unchanged otherwise)
+    """
+    if not ctx.gp or not ctx.gp_param_to_log_param:
+        return params
+
+    params_transformed = []
+    for i, param in enumerate(params):
+        cvxpy_param = ctx.parameters[i]
+        if cvxpy_param in ctx.gp_param_to_log_param:
+            # This parameter needs log transformation for GP
+            params_transformed.append(jnp.log(param))
+        else:
+            params_transformed.append(param)
+    return tuple(params_transformed)
+
+
+def _flatten_and_batch_params(
+    params: tuple[jnp.ndarray, ...],
+    ctx: pa.LayersContext,
+    batch: tuple,
+) -> jnp.ndarray:
+    """Flatten and batch parameters into a single stacked array.
+
+    Converts a tuple of parameter arrays (potentially with mixed batched/unbatched)
+    into a single concatenated array suitable for matrix multiplication with the
+    parametrized problem matrices.
+
+    Args:
+        params: Tuple of parameter arrays
+        ctx: Layer context with batch info and ordering
+        batch: Batch dimensions tuple (empty if unbatched)
+
+    Returns:
+        Concatenated parameter array with shape (num_params, batch_size) or (num_params,)
+    """
+    flattened_params: list[jnp.ndarray | None] = [None] * (len(params) + 1)
+
+    for i, param in enumerate(params):
+        # Check if this parameter is batched or needs broadcasting
+        if ctx.batch_sizes[i] == 0 and batch:
+            # Unbatched parameter - expand to match batch size
+            param_expanded = jnp.expand_dims(param, 0)
+            param_expanded = jnp.broadcast_to(param_expanded, batch + param.shape)
+            flattened_params[ctx.user_order_to_col_order[i]] = jnp.reshape(
+                param_expanded,
+                batch + (-1,),
+                order="F",
+            )
+        else:
+            # Already batched or no batch dimension needed
+            flattened_params[ctx.user_order_to_col_order[i]] = jnp.reshape(
+                param,
+                batch + (-1,),
+                order="F",
+            )
+
+    # Add constant 1.0 column for offset terms in canonical form
+    flattened_params[-1] = jnp.ones(batch + (1,), dtype=params[0].dtype)
+    assert all(p is not None for p in flattened_params), "All parameters must be assigned"
+
+    p_stack = jnp.concatenate(cast(list[jnp.ndarray], flattened_params), -1)
+    # When batched, p_stack is (batch_size, num_params) but we need (num_params, batch_size)
+    if batch:
+        p_stack = p_stack.T
+    return p_stack
+
+
+def _recover_results(
+    primal: jnp.ndarray,
+    dual: jnp.ndarray,
+    ctx: pa.LayersContext,
+    batch: tuple,
+) -> tuple[jnp.ndarray, ...]:
+    """Recover variable values from primal/dual solutions.
+
+    Extracts the requested variables from the solver's primal and dual
+    solutions, applies inverse GP transformation if needed, and removes
+    batch dimension for unbatched inputs.
+
+    Args:
+        primal: Primal solution from solver
+        dual: Dual solution from solver
+        ctx: Layer context with variable recovery info
+        batch: Batch dimensions tuple (empty if unbatched)
+
+    Returns:
+        Tuple of recovered variable values
+    """
+    # Extract each variable using its slice from the solution vectors
+    results = tuple(var.recover(primal, dual) for var in ctx.var_recover)
+
+    # Apply exp transformation to recover from log-space for GP
+    if ctx.gp:
+        results = tuple(jnp.exp(r) for r in results)
+
+    # Squeeze batch dimension for unbatched inputs
+    if not batch:
+        results = tuple(jnp.squeeze(r, 0) for r in results)
+
+    return results
+
+
 class GpuCvxpyLayer:
     def __init__(
         self,
@@ -48,44 +164,12 @@ class GpuCvxpyLayer:
         batch = self.ctx.validate_params(list(params))
 
         # Apply log transformation to GP parameters
-        if self.ctx.gp and self.ctx.gp_param_to_log_param:
-            params_transformed = []
-            for i, param in enumerate(params):
-                cvxpy_param = self.ctx.parameters[i]
-                if cvxpy_param in self.ctx.gp_param_to_log_param:
-                    # This parameter needs log transformation for GP
-                    params_transformed.append(jnp.log(param))
-                else:
-                    params_transformed.append(param)
-            params = tuple(params_transformed)
+        params = _apply_gp_log_transform(params, self.ctx)
 
-        flattened_params: list[jnp.ndarray | None] = [None] * (len(params) + 1)
-        for i, param in enumerate(params):
-            # Check if this parameter is batched or needs broadcasting
-            if self.ctx.batch_sizes[i] == 0 and batch:
-                # Unbatched parameter - expand to match batch size
-                # Add batch dimension by repeating
-                param_expanded = jnp.expand_dims(param, 0)
-                param_expanded = jnp.broadcast_to(param_expanded, batch + param.shape)
-                flattened_params[self.ctx.user_order_to_col_order[i]] = jnp.reshape(
-                    param_expanded,
-                    batch + (-1,),
-                    order="F",
-                )
-            else:
-                # Already batched or no batch dimension needed
-                flattened_params[self.ctx.user_order_to_col_order[i]] = jnp.reshape(
-                    param,
-                    batch + (-1,),
-                    order="F",
-                )
-        flattened_params[-1] = jnp.ones(batch + (1,), dtype=params[0].dtype)
-        # Assert all parameters have been assigned (no Nones remain)
-        assert all(p is not None for p in flattened_params), "All parameters must be assigned"
-        p_stack = jnp.concatenate(cast(list[jnp.ndarray], flattened_params), -1)
-        # When batched, p_stack is (batch_size, num_params) but we need (num_params, batch_size)
-        if batch:
-            p_stack = p_stack.T
+        # Flatten and batch parameters
+        p_stack = _flatten_and_batch_params(params, self.ctx, batch)
+
+        # Evaluate parametrized matrices
         P_eval = self.P @ p_stack if self.P is not None else None
         q_eval = self.q @ p_stack
         A_eval = self.A @ p_stack
@@ -120,17 +204,9 @@ class GpuCvxpyLayer:
 
         solve_problem.defvjp(solve_problem_fwd, solve_problem_bwd)
         primal, dual = solve_problem(P_eval, q_eval, A_eval)
-        results = tuple(var.recover(primal, dual) for var in self.ctx.var_recover)
 
-        # Apply exp transformation to recover from log-space for GP
-        if self.ctx.gp:
-            results = tuple(jnp.exp(r) for r in results)
-
-        # Squeeze batch dimension for unbatched inputs
-        if not batch:
-            results = tuple(jnp.squeeze(r, 0) for r in results)
-
-        return results
+        # Recover results and apply GP inverse transform if needed
+        return _recover_results(primal, dual, self.ctx, batch)
 
 
 def scipy_csr_to_jax_bcsr(
