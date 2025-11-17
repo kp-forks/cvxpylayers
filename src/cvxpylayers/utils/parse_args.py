@@ -2,9 +2,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
 import cvxpy as cp
+import numpy as np
 import scipy.sparse
 from cvxpy.reductions.dcp2cone.cone_matrix_stuffing import ParamConeProg
-from cvxpy.reductions.solvers.solving_chain import SolvingChain
+from cvxpy.reductions.dgp2dcp.canonicalizers import DgpCanonMethods
 
 import cvxpylayers.interfaces
 
@@ -12,6 +13,80 @@ if TYPE_CHECKING:
     import torch
 
 T = TypeVar("T")
+
+
+class _DgpCanonMethodsNoValueCheck(DgpCanonMethods):  # type: ignore[misc]
+    """Custom DGP canonicalization methods that work without parameter values."""
+
+    def parameter_canon(
+        self, parameter: cp.Parameter, args: list[Any]
+    ) -> tuple[cp.Parameter, list[Any]]:
+        """Canonicalize a parameter without requiring it to have a value.
+
+        Args:
+            parameter: The parameter to canonicalize
+            args: Arguments (unused)
+
+        Returns:
+            Tuple of (log-space parameter, constraints)
+        """
+        del args
+        # Swaps out positive parameters for unconstrained parameters.
+        if parameter in self._parameters:
+            return self._parameters[parameter], []
+        else:
+            # Create log-space parameter, preserving None value if present
+            log_parameter = cp.Parameter(
+                parameter.shape,
+                name=parameter.name(),
+                value=np.log(parameter.value) if parameter.value is not None else None,
+            )
+            self._parameters[parameter] = log_parameter
+            return log_parameter, []
+
+
+class _Dgp2DcpNoValueCheck(cp.reductions.Dgp2Dcp):  # type: ignore[misc]
+    """DGP to DCP reduction that works without parameter values.
+
+    This is an internal cvxpylayers class that bypasses CVXPY's requirement
+    for parameters to have values during the DGP→DCP transformation.
+
+    CVXPY's Dgp2Dcp.accepts() checks that all parameters have values, but
+    this is unnecessary - the transformation is purely symbolic and doesn't
+    actually need the values until solve time.
+
+    This class is NOT monkey patching - it's a separate class used only
+    within cvxpylayers. CVXPY's original Dgp2Dcp remains unchanged.
+    """
+
+    def accepts(self, problem: cp.Problem) -> bool:
+        """Accept DGP problems even without parameter values.
+
+        Args:
+            problem: The CVXPY problem to check
+
+        Returns:
+            True if the problem is DGP, False otherwise
+        """
+        return problem.is_dgp()
+
+    def apply(self, problem: cp.Problem) -> tuple[cp.Problem, Any]:
+        """Apply DGP to DCP reduction using custom canon methods.
+
+        Args:
+            problem: The DGP problem to reduce
+
+        Returns:
+            Tuple of (DCP problem, inverse data)
+        """
+        if not self.accepts(problem):
+            raise ValueError("The supplied problem is not DGP.")
+
+        # Use our custom canon methods that handle None parameter values
+        self.canon_methods = _DgpCanonMethodsNoValueCheck()
+        equiv_problem, inverse_data = super(cp.reductions.Dgp2Dcp, self).apply(problem)  # type: ignore[reportAttributeAccessIssue]
+        inverse_data._problem = problem
+        return equiv_problem, inverse_data
 
 
 class SolverData(Protocol):
@@ -161,11 +236,6 @@ def _validate_problem(
     if gp:
         if not problem.is_dgp(dpp=True):  # type: ignore[call-arg]
             raise ValueError("Problem must be DPP for geometric programming.")
-        # GP requires initial values for all parameters
-        # TODO update CVXPY so initial values are not necessary for cvxpylayers GPs.
-        for param in parameters:
-            if param.value is None:
-                raise ValueError("An initial value for each parameter is required when gp=True.")
     else:
         if not problem.is_dcp(dpp=True):  # type: ignore[call-arg]
             raise ValueError("Problem must be DPP.")
@@ -179,32 +249,6 @@ def _validate_problem(
         raise ValueError("The layer's parameters must be provided as a list or tuple")
     if not isinstance(variables, list) and not isinstance(variables, tuple):
         raise ValueError("The layer's variables must be provided as a list or tuple")
-
-
-def _extract_gp_param_mapping(
-    gp: bool, solving_chain: SolvingChain | None
-) -> dict[cp.Parameter, cp.Parameter] | None:
-    """Extract GP parameter to log-space DCP parameter mapping.
-
-    For geometric programs (GP), CVXPY converts the problem to a DCP by
-    applying log transformation. This extracts the mapping from original
-    GP parameters to their log-space DCP equivalents.
-
-    Args:
-        gp: Whether this is a geometric program
-        solving_chain: CVXPY's solving chain containing reduction info
-
-    Returns:
-        Mapping from GP parameters to log-space DCP parameters, or None if not GP
-    """
-    if not gp or solving_chain is None:
-        return None
-
-    dgp2dcp = solving_chain.get(cp.reductions.Dgp2Dcp)  # type: ignore[reportAttributeAccessIssue]
-    if dgp2dcp is not None:
-        # dgp2dcp.canon_methods._parameters maps original GP params to log-space DCP params
-        return dgp2dcp.canon_methods._parameters
-    return None
 
 
 def _build_user_order_mapping(
@@ -270,15 +314,36 @@ def parse_args(
     if solver is None:
         solver = "DIFFCP"
 
-    # Get problem data from CVXPY
-    data, solving_chain, _ = problem.get_problem_data(
-        solver=solver, gp=gp, verbose=verbose, canon_backend=canon_backend, solver_opts=solver_args
-    )
+    # Handle GP problems using our custom reduction
+    gp_param_to_log_param = None
+    if gp:
+        # Apply custom DGP→DCP reduction that doesn't require parameter values
+        dgp2dcp = _Dgp2DcpNoValueCheck()
+        dcp_problem, _ = dgp2dcp.apply(problem)
+
+        # Extract parameter mapping from the reduction
+        gp_param_to_log_param = dgp2dcp.canon_methods._parameters
+
+        # Get problem data from the already-transformed DCP problem
+        data, _, _ = dcp_problem.get_problem_data(
+            solver=solver,
+            gp=False,
+            verbose=verbose,
+            canon_backend=canon_backend,
+            solver_opts=solver_args,
+        )
+    else:
+        # Standard DCP path
+        data, _, _ = problem.get_problem_data(
+            solver=solver,
+            gp=False,
+            verbose=verbose,
+            canon_backend=canon_backend,
+            solver_opts=solver_args,
+        )
+
     param_prob = data[cp.settings.PARAM_PROB]  # type: ignore[attr-defined]
     cone_dims = data["dims"]
-
-    # Extract GP parameter mapping if needed
-    gp_param_to_log_param = _extract_gp_param_mapping(gp, solving_chain)
 
     # Create solver context
     solver_ctx = cvxpylayers.interfaces.get_solver_ctx(

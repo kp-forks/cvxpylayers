@@ -510,6 +510,52 @@ def test_batched_gp():
     torch.autograd.gradcheck(f_batch, (a_batch, b_batch, c_batch), atol=1e-3, rtol=1e-3)
 
 
+def test_gp_without_param_values():
+    """Test that GP layers can be created without setting parameter values."""
+    _ = set_seed(0)
+    x = cp.Variable(pos=True)
+    y = cp.Variable(pos=True)
+    z = cp.Variable(pos=True)
+
+    # Create parameters WITHOUT setting values (this is the key test!)
+    a = cp.Parameter(pos=True, name="a")
+    b = cp.Parameter(pos=True, name="b")
+    c = cp.Parameter(name="c")
+
+    # Build GP problem
+    objective_fn = 1 / (x * y * z)
+    constraints = [a * (x * y + x * z + y * z) <= b, x >= y**c]
+    problem = cp.Problem(cp.Minimize(objective_fn), constraints)
+
+    # This should work WITHOUT needing to set a.value, b.value, c.value
+    layer = CvxpyLayer(problem, parameters=[a, b, c], variables=[x, y, z], gp=True)
+
+    # Now use the layer with actual parameter values
+    a_th = torch.tensor([2.0], dtype=torch.float64, requires_grad=True)
+    b_th = torch.tensor([1.0], dtype=torch.float64, requires_grad=True)
+    c_th = torch.tensor([0.5], dtype=torch.float64, requires_grad=True)
+
+    # Forward pass
+    x_th, y_th, z_th = layer(a_th, b_th, c_th)
+
+    # Verify solution against CVXPY direct solve
+    a.value = 2.0
+    b.value = 1.0
+    c.value = 0.5
+    problem.solve(cp.CLARABEL, gp=True)
+
+    assert torch.allclose(torch.tensor(x.value), x_th, atol=1e-5)
+    assert torch.allclose(torch.tensor(y.value), y_th, atol=1e-5)
+    assert torch.allclose(torch.tensor(z.value), z_th, atol=1e-5)
+
+    # Test gradients
+    def f(a, b, c):
+        res = layer(a, b, c, solver_args={"acceleration_lookback": 0})
+        return res[0].sum()
+
+    torch.autograd.gradcheck(f, (a_th, b_th, c_th), atol=1e-4)
+
+
 def test_no_grad_context():
     n, m = 2, 3
     x = cp.Variable(n)

@@ -498,3 +498,56 @@ def test_batched_gp():
         order=1,
         modes=["rev"],
     )
+
+
+def test_gp_without_param_values():
+    """Test that GP layers can be created without setting parameter values."""
+    x = cp.Variable(pos=True)
+    y = cp.Variable(pos=True)
+    z = cp.Variable(pos=True)
+
+    # Create parameters WITHOUT setting values (this is the key test!)
+    a = cp.Parameter(pos=True, name="a")
+    b = cp.Parameter(pos=True, name="b")
+    c = cp.Parameter(name="c")
+
+    # Build GP problem
+    objective_fn = 1 / (x * y * z)
+    constraints = [a * (x * y + x * z + y * z) <= b, x >= y**c]
+    problem = cp.Problem(cp.Minimize(objective_fn), constraints)
+
+    # This should work WITHOUT needing to set a.value, b.value, c.value
+    layer = CvxpyLayer(problem, parameters=[a, b, c], variables=[x, y, z], gp=True)
+
+    # Now use the layer with actual parameter values
+    a_jax = jnp.array(2.0)
+    b_jax = jnp.array(1.0)
+    c_jax = jnp.array(0.5)
+
+    # Forward pass
+    x_jax, y_jax, z_jax = layer(a_jax, b_jax, c_jax)
+
+    # Verify solution against CVXPY direct solve
+    a.value = 2.0
+    b.value = 1.0
+    c.value = 0.5
+    problem.solve(cp.CLARABEL, gp=True)
+
+    assert np.isclose(x.value, x_jax, atol=1e-5)
+    assert np.isclose(y.value, y_jax, atol=1e-5)
+    assert np.isclose(z.value, z_jax, atol=1e-5)
+
+    # Test gradients
+    check_grads(
+        lambda a, b, c: jnp.sum(
+            layer(
+                a,
+                b,
+                c,
+                solver_args={"acceleration_lookback": 0},
+            )[0],
+        ),
+        [a_jax, b_jax, c_jax],
+        order=1,
+        modes=["rev"],
+    )
