@@ -108,15 +108,17 @@ def _build_cuclarabel_matrices(
             shape=P_shape,
         )
 
-        # Build augmented matrix [A | b] from sparse structure
         A = cucsr_matrix(
             (con_vals_i[A_idx], *A_structure),
             shape=A_shape,
         )
+
+        b = cupy.zeros(A_shape[0])
+        b[b_idx] = con_vals_i[-b_idx.size :]
         # Extract A and b, negating A to match CUCLARABEL convention
         Ps.append(P)
         As.append(-A)
-        bs.append(con_vals_i[-b_idx.size :])
+        bs.append(b)
         qs.append(lin_vals_i)
         b_idxs.append(b_idx)
 
