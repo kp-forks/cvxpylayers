@@ -99,13 +99,17 @@ def _build_cuclarabel_matrices(
 
     for i in range(batch_size):
         # Convert to cupy - handles both torch tensors and jax arrays
-        quad_vals_i = cupy.array(quad_obj_values[:, i])
+        quad_vals_i = cupy.array(quad_obj_values[:, i]) if quad_obj_values is not None else None
         con_vals_i = cupy.array(con_values[:, i])
         lin_vals_i = cupy.array(lin_obj_values[:-1, i])
 
-        P = cucsr_matrix(
-            (quad_vals_i[P_idx], *P_structure),
-            shape=P_shape,
+        P = (
+            cucsr_matrix(
+                (quad_vals_i[P_idx], *P_structure),
+                shape=P_shape,
+            )
+            if P_idx is not None and quad_vals_i is not None
+            else cucsr_matrix((cupy.array([]), *P_structure), shape=P_shape)
         )
 
         A = cucsr_matrix(
@@ -186,7 +190,7 @@ def _call_cuclarabel(Ps, qs, As, bs, cones):
 
 
 class CUCLARABEL_ctx:
-    P_idxs: cupy.ndarray
+    P_idxs: cupy.ndarray | None
     P_structure: tuple[cupy.ndarray, cupy.ndarray]
     P_shape: tuple[int, int]
 
@@ -204,16 +208,23 @@ class CUCLARABEL_ctx:
         upper_bounds,
         options=None,
     ):
-        P_shuffle, P_structure, P_shape = convert_csc_structure_to_csr_structure(
-            objective_structure, False
-        )
-        assert P_shape[0] == P_shape[1]
         A_shuffle, A_structure, A_shape, b_idx = convert_csc_structure_to_csr_structure(
             constraint_structure, True
         )
+
+        if objective_structure is not None:
+            P_shuffle, P_structure, P_shape = convert_csc_structure_to_csr_structure(
+                objective_structure, False
+            )
+            assert P_shape[0] == P_shape[1]
+        else:
+            P_shuffle = None
+            P_structure = (np.array([], dtype=int), np.array([0] * (A_shape[1] + 1)))
+            P_shape = (A_shape[1], A_shape[1])
+
         assert P_shape[0] == A_shape[1]
 
-        self.P_idxs = cupy.array(P_shuffle)
+        self.P_idxs = cupy.array(P_shuffle) if P_shuffle is not None else None
         self.P_structure = tuple(cupy.array(arr) for arr in P_structure)
         self.P_shape = P_shape
 
@@ -234,7 +245,7 @@ class CUCLARABEL_ctx:
         if originally_unbatched:
             con_values = con_values.unsqueeze(1)
             lin_obj_values = lin_obj_values.unsqueeze(1)
-            quad_obj_values = quad_obj_values.unsqueeze(1)
+            quad_obj_values = quad_obj_values.unsqueeze(1) if quad_obj_values is not None else None
 
         # Build matrices
         Ps, qs, As, bs, b_idxs = _build_cuclarabel_matrices(

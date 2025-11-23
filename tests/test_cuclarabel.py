@@ -363,7 +363,9 @@ def test_mixed_batched_unbatched():
 
     # Compare CuClarabel vs DIFFCP for each batch element
     for batch_idx in range(batch_size):
-        primal_diff = torch.norm(sols_cuclarabel[0][batch_idx] - sols_diffcp[0][batch_idx]).item()
+        primal_diff = torch.norm(
+            sols_cuclarabel[0][batch_idx].cpu() - sols_diffcp[0][batch_idx]
+        ).item()
         assert primal_diff < 1e-3, f"Batch {batch_idx}: ||CuClarabel - DIFFCP|| = {primal_diff:.6e}"
 
 
@@ -409,24 +411,27 @@ def test_batch_size_one_preserves_batch_dimension():
     )
 
 
-def test_soc_problem_rejected():
+def test_soc_problem():
     """Test that CuClarabel rejects second-order cone problems."""
     # Problem with norm (SOC constraint)
-    x = cp.Variable(3)
-    problem = cp.Problem(cp.Minimize(cp.norm(x, 2)), [x >= 0])
+    n = 3
+    x = cp.Variable(n)
+    bound = cp.Parameter(n)
+    problem = cp.Problem(cp.Minimize(cp.norm(x, 2)), [x >= bound])
+    bound_val = np.array([1.0, 2.0, 3.0])
 
-    with pytest.raises(SolverError, match="could not be reduced to a QP"):
-        CvxpyLayer(problem, [], [x], solver="CUCLARABEL")
+    compare_solvers(problem, [bound], [bound_val], [x])
 
 
-def test_exponential_cone_rejected():
+def test_exponential_cone_problem():
     """Test that CuClarabel rejects exponential cone problems."""
     # Problem with logarithm (exponential cone)
     x = cp.Variable()
-    problem = cp.Problem(cp.Minimize(-cp.log(x)), [x >= 0.1])
+    bound = cp.Parameter()
+    problem = cp.Problem(cp.Minimize(-cp.log(x)), [x >= bound])
+    bound_val = np.array(0.1)
 
-    with pytest.raises(SolverError, match="could not be reduced to a QP"):
-        CvxpyLayer(problem, [], [x], solver="CUCLARABEL")
+    compare_solvers(problem, [bound], [bound_val], [x])
 
 
 def test_sdp_rejected():
@@ -435,7 +440,7 @@ def test_sdp_rejected():
     X = cp.Variable((3, 3), PSD=True)
     problem = cp.Problem(cp.Minimize(cp.trace(X)))
 
-    with pytest.raises(SolverError, match="could not be reduced to a QP"):
+    with pytest.raises(SolverError, match="do not support.*PSD"):
         CvxpyLayer(problem, [], [X], solver="CUCLARABEL")
 
 
