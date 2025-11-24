@@ -5,7 +5,9 @@ from typing import TYPE_CHECKING, Any
 import diffcp
 import numpy as np
 import scipy.sparse as sp
-from cvxpy.reductions.solvers.conic_solvers.scs_conif import dims_to_solver_dict
+from cvxpy.reductions.solvers.conic_solvers.scs_conif import (
+    dims_to_solver_dict
+)
 
 try:
     import jax.numpy as jnp
@@ -43,9 +45,11 @@ def _detect_batch_size(con_values: TensorLike) -> tuple[int, bool]:
             - batch_size: Number of batch elements (1 if unbatched)
             - originally_unbatched: True if input had no batch dimension
     """
-    # Handle both torch tensors (.dim()) and jax/numpy arrays (.ndim)
-    ndim = con_values.dim() if hasattr(con_values, "dim") else con_values.ndim  # type: ignore[attr-defined]
-
+    # Handle both torch tensors (.dim()) and jax/numpy/mlx arrays (.ndim)
+    ndim = (
+            con_values.dim() if hasattr(con_values, "dim")
+            else con_values.ndim  # type: ignore[attr-defined]
+            )
     if ndim == 1:
         return 1, True  # Unbatched input
     else:
@@ -59,7 +63,10 @@ def _build_diffcp_matrices(
     A_shape: tuple[int, int],
     b_idx: np.ndarray,
     batch_size: int,
-) -> tuple[list[sp.csc_matrix], list[np.ndarray], list[np.ndarray], list[np.ndarray]]:
+) -> tuple[list[sp.csc_matrix],
+           list[np.ndarray],
+           list[np.ndarray],
+           list[np.ndarray]]:
     """Build DIFFCP matrices from constraint and objective values.
 
     Converts parameter values into the conic form required by DIFFCP solver:
@@ -130,11 +137,12 @@ class DIFFCP_ctx:
 
         self.A_structure = (con_indices, con_ptr)
         self.A_shape = (m, np1)
-        self.b_idx = con_indices[con_ptr[-2] : con_ptr[-1]]
+        self.b_idx = con_indices[con_ptr[-2]: con_ptr[-1]]
 
         self.dims = dims
 
-    def torch_to_data(self, quad_obj_values, lin_obj_values, con_values) -> "DIFFCP_data":
+    def torch_to_data(self, quad_obj_values,
+                      lin_obj_values, con_values) -> "DIFFCP_data":
         batch_size, originally_unbatched = _detect_batch_size(con_values)
 
         # Add batch dimension for uniform handling if needed
@@ -162,7 +170,8 @@ class DIFFCP_ctx:
             originally_unbatched=originally_unbatched,
         )
 
-    def jax_to_data(self, quad_obj_values, lin_obj_values, con_values) -> "DIFFCP_data":
+    def jax_to_data(self, quad_obj_values,
+                    lin_obj_values, con_values) -> "DIFFCP_data":
         if jnp is None:
             raise ImportError(
                 "JAX interface requires 'jax' package to be installed. "
@@ -196,20 +205,21 @@ class DIFFCP_ctx:
             originally_unbatched=originally_unbatched,
         )
 
-    def mlx_to_data(self, quad_obj_values, lin_obj_values, con_values) -> "DIFFCP_data":
-        print(f"[MLX DEBUG] DIFFCP_ctx.mlx_to_data: Called with quad_obj_values={quad_obj_values is not None}, lin_obj_values.shape={lin_obj_values.shape if hasattr(lin_obj_values, 'shape') else 'N/A'}, con_values.shape={con_values.shape if hasattr(con_values, 'shape') else 'N/A'}")
+    def mlx_to_data(self, quad_obj_values,
+                    lin_obj_values, con_values) -> "DIFFCP_data":
+
         if mx is None:
             raise ImportError(
                 "MLX interface requires 'mlx' package to be installed. "
                 "Install with: pip install mlx"
             )
 
-        # Convert to numpy arrays if they're MLX arrays (they come as numpy from updated.py)
+        # Convert to numpy arrays if they're MLX arrays
         if isinstance(con_values, np.ndarray):
             con_values_np = con_values
         else:
             con_values_np = np.array(con_values, dtype=np.float32)
-        
+
         if isinstance(lin_obj_values, np.ndarray):
             lin_obj_values_np = lin_obj_values
         else:
@@ -232,7 +242,6 @@ class DIFFCP_ctx:
             batch_size,
         )
 
-        print(f"[MLX DEBUG] DIFFCP_ctx.mlx_to_data: Returning DIFFCP_data with batch_size={batch_size}, originally_unbatched={originally_unbatched}")
         return DIFFCP_data(
             As=As,
             bs=bs,
@@ -274,7 +283,7 @@ def _compute_gradients(
     # Convert incoming gradients to lists for DIFFCP
     dxs = [np.array(dprimal[i]) for i in range(batch_size)]
     dys = [np.array(ddual[i]) for i in range(batch_size)]
-    dss = [np.zeros_like(bs[i]) for i in range(batch_size)]  # No gradient w.r.t. slack
+    dss = [np.zeros_like(bs[i]) for i in range(batch_size)]
 
     # Call DIFFCP's batch adjoint to get gradients w.r.t. problem data
     dAs, dbs, dcs = adj_batch(dxs, dys, dss)
@@ -283,7 +292,8 @@ def _compute_gradients(
     dq_batch = []
     dA_batch = []
     for i in range(batch_size):
-        # Negate dA because A was negated in forward pass, but not db (b was not negated)
+        # Negate dA because A was negated in forward pass,
+        #but not db (b was not negated)
         con_grad = np.hstack([-dAs[i].data, dbs[i][b_idxs[i]]])
         # Add zero gradient for constant offset term
         lin_grad = np.hstack([dcs[i], np.array([0.0])])
@@ -306,7 +316,8 @@ class DIFFCP_data:
     def torch_solve(self, solver_args=None):
         if torch is None:
             raise ImportError(
-                "PyTorch interface requires 'torch' package. Install with: pip install torch"
+                "PyTorch interface requires 'torch' package."
+                "Install with: pip install torch"
             )
 
         if solver_args is None:
@@ -328,7 +339,8 @@ class DIFFCP_data:
     def torch_derivative(self, primal, dual, adj_batch):
         if torch is None:
             raise ImportError(
-                "PyTorch interface requires 'torch' package. Install with: pip install torch"
+                "PyTorch interface requires 'torch' package."
+                "Install with: pip install torch"
             )
 
         # Compute gradients
@@ -393,7 +405,6 @@ class DIFFCP_data:
         )
 
     def mlx_solve(self, solver_args=None):
-        print(f"[MLX DEBUG] DIFFCP_data.mlx_solve: Called with batch_size={self.batch_size}, solver_args={solver_args}")
         if mx is None:
             raise ImportError(
                 "MLX interface requires 'mlx' package to be installed. "
@@ -404,7 +415,6 @@ class DIFFCP_data:
             solver_args = {}
 
         # Always use batch solve
-        print(f"[MLX DEBUG] DIFFCP_data.mlx_solve: Calling diffcp.solve_and_derivative_batch")
         xs, ys, _, _, adj_batch = diffcp.solve_and_derivative_batch(
             self.As,
             self.bs,
@@ -416,11 +426,9 @@ class DIFFCP_data:
         # MLX doesn't support float64 on GPU, use float32 instead
         primal = mx.stack([mx.array(x, dtype=mx.float32) for x in xs])
         dual = mx.stack([mx.array(y, dtype=mx.float32) for y in ys])
-        print(f"[MLX DEBUG] DIFFCP_data.mlx_solve: Completed, returning primal.shape={primal.shape}, dual.shape={dual.shape}")
         return primal, dual, adj_batch
 
     def mlx_derivative(self, dprimal, ddual, adj_batch):
-        print(f"[MLX DEBUG] DIFFCP_data.mlx_derivative: Called with dprimal.shape={dprimal.shape if hasattr(dprimal, 'shape') else 'N/A'}, ddual.shape={ddual.shape if hasattr(ddual, 'shape') else 'N/A'}, batch_size={self.batch_size}")
         if mx is None:
             raise ImportError(
                 "MLX interface requires 'mlx' package to be installed. "
@@ -431,8 +439,9 @@ class DIFFCP_data:
         # Handle both batched and unbatched cases
         dprimal_np = np.array(dprimal, dtype=np.float32)
         ddual_np = np.array(ddual, dtype=np.float32)
-        
-        # Ensure proper shape for _compute_gradients which expects indexable arrays
+
+        # Ensure proper shape for _compute_gradients
+        # which expects indexable arrays
         # If unbatched, add batch dimension
         if dprimal_np.ndim == 1:
             dprimal_np = dprimal_np[np.newaxis, :]
@@ -456,7 +465,6 @@ class DIFFCP_data:
             dq_stacked = mx.squeeze(dq_stacked, 1)
             dA_stacked = mx.squeeze(dA_stacked, 1)
 
-        print(f"[MLX DEBUG] DIFFCP_data.mlx_derivative: Completed, returning dq.shape={dq_stacked.shape if dq_stacked is not None else None}, dA.shape={dA_stacked.shape if dA_stacked is not None else None}")
         return (
             None,
             dq_stacked,
