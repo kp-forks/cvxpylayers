@@ -17,9 +17,14 @@ try:
 except ImportError:
     torch = None  # type: ignore[assignment]
 
+try:
+    import mlx.core as mx
+except ImportError:
+    mx = None  # type: ignore[assignment]
+
 if TYPE_CHECKING:
     # Type alias for multi-framework tensor types
-    TensorLike = torch.Tensor | jnp.ndarray | np.ndarray
+    TensorLike = torch.Tensor | jnp.ndarray | np.ndarray | mx.array
 else:
     TensorLike = Any
 
@@ -191,6 +196,53 @@ class DIFFCP_ctx:
             originally_unbatched=originally_unbatched,
         )
 
+    def mlx_to_data(self, quad_obj_values, lin_obj_values, con_values) -> "DIFFCP_data":
+        print(f"[MLX DEBUG] DIFFCP_ctx.mlx_to_data: Called with quad_obj_values={quad_obj_values is not None}, lin_obj_values.shape={lin_obj_values.shape if hasattr(lin_obj_values, 'shape') else 'N/A'}, con_values.shape={con_values.shape if hasattr(con_values, 'shape') else 'N/A'}")
+        if mx is None:
+            raise ImportError(
+                "MLX interface requires 'mlx' package to be installed. "
+                "Install with: pip install mlx"
+            )
+
+        # Convert to numpy arrays if they're MLX arrays (they come as numpy from updated.py)
+        if isinstance(con_values, np.ndarray):
+            con_values_np = con_values
+        else:
+            con_values_np = np.array(con_values, dtype=np.float32)
+        
+        if isinstance(lin_obj_values, np.ndarray):
+            lin_obj_values_np = lin_obj_values
+        else:
+            lin_obj_values_np = np.array(lin_obj_values, dtype=np.float32)
+
+        batch_size, originally_unbatched = _detect_batch_size(con_values_np)
+
+        # Add batch dimension for uniform handling if needed
+        if originally_unbatched:
+            con_values_np = np.expand_dims(con_values_np, 1)
+            lin_obj_values_np = np.expand_dims(lin_obj_values_np, 1)
+
+        # Build matrices
+        As, bs, cs, b_idxs = _build_diffcp_matrices(
+            con_values_np,
+            lin_obj_values_np,
+            self.A_structure,
+            self.A_shape,
+            self.b_idx,
+            batch_size,
+        )
+
+        print(f"[MLX DEBUG] DIFFCP_ctx.mlx_to_data: Returning DIFFCP_data with batch_size={batch_size}, originally_unbatched={originally_unbatched}")
+        return DIFFCP_data(
+            As=As,
+            bs=bs,
+            cs=cs,
+            b_idxs=b_idxs,
+            cone_dict=dims_to_solver_dict(self.dims),
+            batch_size=batch_size,
+            originally_unbatched=originally_unbatched,
+        )
+
 
 def _compute_gradients(
     adj_batch: Callable,
@@ -334,6 +386,77 @@ class DIFFCP_data:
             dq_stacked = jnp.squeeze(dq_stacked, 1)
             dA_stacked = jnp.squeeze(dA_stacked, 1)
 
+        return (
+            None,
+            dq_stacked,
+            dA_stacked,
+        )
+
+    def mlx_solve(self, solver_args=None):
+        print(f"[MLX DEBUG] DIFFCP_data.mlx_solve: Called with batch_size={self.batch_size}, solver_args={solver_args}")
+        if mx is None:
+            raise ImportError(
+                "MLX interface requires 'mlx' package to be installed. "
+                "Install with: pip install mlx"
+            )
+
+        if solver_args is None:
+            solver_args = {}
+
+        # Always use batch solve
+        print(f"[MLX DEBUG] DIFFCP_data.mlx_solve: Calling diffcp.solve_and_derivative_batch")
+        xs, ys, _, _, adj_batch = diffcp.solve_and_derivative_batch(
+            self.As,
+            self.bs,
+            self.cs,
+            [self.cone_dict] * self.batch_size,
+            **solver_args,
+        )
+        # Stack results into batched arrays
+        # MLX doesn't support float64 on GPU, use float32 instead
+        primal = mx.stack([mx.array(x, dtype=mx.float32) for x in xs])
+        dual = mx.stack([mx.array(y, dtype=mx.float32) for y in ys])
+        print(f"[MLX DEBUG] DIFFCP_data.mlx_solve: Completed, returning primal.shape={primal.shape}, dual.shape={dual.shape}")
+        return primal, dual, adj_batch
+
+    def mlx_derivative(self, dprimal, ddual, adj_batch):
+        print(f"[MLX DEBUG] DIFFCP_data.mlx_derivative: Called with dprimal.shape={dprimal.shape if hasattr(dprimal, 'shape') else 'N/A'}, ddual.shape={ddual.shape if hasattr(ddual, 'shape') else 'N/A'}, batch_size={self.batch_size}")
+        if mx is None:
+            raise ImportError(
+                "MLX interface requires 'mlx' package to be installed. "
+                "Install with: pip install mlx"
+            )
+
+        # Convert MLX arrays to numpy for gradient computation
+        # Handle both batched and unbatched cases
+        dprimal_np = np.array(dprimal, dtype=np.float32)
+        ddual_np = np.array(ddual, dtype=np.float32)
+        
+        # Ensure proper shape for _compute_gradients which expects indexable arrays
+        # If unbatched, add batch dimension
+        if dprimal_np.ndim == 1:
+            dprimal_np = dprimal_np[np.newaxis, :]
+        if ddual_np.ndim == 1:
+            ddual_np = ddual_np[np.newaxis, :]
+
+        # Compute gradients
+        dq_batch, dA_batch = _compute_gradients(
+            adj_batch, dprimal_np, ddual_np, self.bs, self.b_idxs, self.batch_size
+        )
+
+        # Stack into shape (num_entries, batch_size) and convert to MLX
+        # MLX doesn't support float64 on GPU, use float32 instead
+        dq_stacked = mx.stack([mx.array(g, dtype=mx.float32) for g in dq_batch])
+        dq_stacked = mx.transpose(dq_stacked)
+        dA_stacked = mx.stack([mx.array(g, dtype=mx.float32) for g in dA_batch])
+        dA_stacked = mx.transpose(dA_stacked)
+
+        # Squeeze batch dimension only if input was originally unbatched
+        if self.originally_unbatched:
+            dq_stacked = mx.squeeze(dq_stacked, 1)
+            dA_stacked = mx.squeeze(dA_stacked, 1)
+
+        print(f"[MLX DEBUG] DIFFCP_data.mlx_derivative: Completed, returning dq.shape={dq_stacked.shape if dq_stacked is not None else None}, dA.shape={dA_stacked.shape if dA_stacked is not None else None}")
         return (
             None,
             dq_stacked,

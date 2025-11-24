@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
 import cvxpy as cp
+import numpy as np
 import scipy.sparse
 from cvxpy.reductions.dcp2cone.cone_matrix_stuffing import ParamConeProg
 
@@ -239,38 +240,81 @@ def parse_args(
     if solver is None:
         solver = "DIFFCP"
 
+    # Set temporary default values for parameters that don't have values
+    # This prevents NaN values from appearing in the problem data
+    # For GP problems, we need to be more careful - don't set values for GP params
+    # as the custom reduction handles None values
+    param_original_values = {}
+    if not gp:
+        # Only set temporary values for non-GP problems
+        for param in parameters:
+            if param.value is None:
+                # Set a temporary default value based on parameter properties
+                if hasattr(param, 'nonneg') and param.nonneg:
+                    # For non-negative parameters, use 1.0
+                    param_original_values[param] = None
+                    param.value = np.ones(param.shape, dtype=np.float64)
+                elif hasattr(param, 'pos') and param.pos:
+                    # For positive parameters, use 1.0
+                    param_original_values[param] = None
+                    param.value = np.ones(param.shape, dtype=np.float64)
+                else:
+                    # For unconstrained parameters, use 0.0
+                    param_original_values[param] = None
+                    param.value = np.zeros(param.shape, dtype=np.float64)
+
     # Handle GP problems using our custom reduction
     gp_param_to_log_param = None
-    if gp:
-        # Apply custom DGP→DCP reduction that doesn't require parameter values
-        dgp2dcp = _Dgp2DcpNoValueCheck()
-        dcp_problem, _ = dgp2dcp.apply(problem)
+    try:
+        if gp:
+            # Apply custom DGP→DCP reduction that doesn't require parameter values
+            dgp2dcp = _Dgp2DcpNoValueCheck()
+            dcp_problem, _ = dgp2dcp.apply(problem)
 
-        # Extract parameter mapping from the reduction
-        gp_param_to_log_param = dgp2dcp.canon_methods._parameters
+            # Extract parameter mapping from the reduction
+            gp_param_to_log_param = dgp2dcp.canon_methods._parameters
 
-        # Get problem data from the already-transformed DCP problem
-        data, _, _ = dcp_problem.get_problem_data(
-            solver=solver,
-            gp=False,
-            verbose=verbose,
-            canon_backend=canon_backend,
-            solver_opts=solver_args,
-        )
-    else:
-        # Standard DCP path
-        data, _, _ = problem.get_problem_data(
-            solver=solver,
-            gp=False,
-            verbose=verbose,
-            canon_backend=canon_backend,
-            solver_opts=solver_args,
-        )
+            # For GP problems, we need to set temporary values on the DCP problem's parameters
+            # (the log-space parameters) to avoid NaN values
+            dcp_param_original_values = {}
+            for dcp_param in dcp_problem.parameters():
+                if dcp_param.value is None:
+                    dcp_param_original_values[dcp_param] = None
+                    # Log-space parameters are unconstrained, use 0.0
+                    dcp_param.value = np.zeros(dcp_param.shape, dtype=np.float64)
+
+            try:
+                # Get problem data from the already-transformed DCP problem
+                data, _, _ = dcp_problem.get_problem_data(
+                    solver=solver,
+                    gp=False,
+                    verbose=verbose,
+                    canon_backend=canon_backend,
+                    solver_opts=solver_args,
+                )
+            finally:
+                # Restore original parameter values
+                for dcp_param, original_value in dcp_param_original_values.items():
+                    dcp_param.value = original_value
+        else:
+            # Standard DCP path
+            data, _, _ = problem.get_problem_data(
+                solver=solver,
+                gp=False,
+                verbose=verbose,
+                canon_backend=canon_backend,
+                solver_opts=solver_args,
+            )
+    finally:
+        # Restore original parameter values (None for those that didn't have values)
+        for param, original_value in param_original_values.items():
+            param.value = original_value
 
     param_prob = data[cp.settings.PARAM_PROB]  # type: ignore[attr-defined]
     cone_dims = data["dims"]
 
     # Create solver context
+    print(f"[MLX DEBUG] parse_args: Creating solver context for solver='{solver}'")
     solver_ctx = cvxpylayers.interfaces.get_solver_ctx(
         solver,
         param_prob,
@@ -278,6 +322,7 @@ def parse_args(
         data,
         solver_args,
     )
+    print(f"[MLX DEBUG] parse_args: Solver context created: {type(solver_ctx).__name__}")
 
     # Build parameter ordering mapping
     user_order_to_col_order = _build_user_order_mapping(

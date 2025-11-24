@@ -20,6 +20,19 @@ try:
 except ImportError:
     torch = None  # type: ignore[assignment]
 
+try:
+    import mlx.core as mx
+except ImportError:
+    mx = None  # type: ignore[assignment]
+
+if torch is not None:
+    from torch import TYPE_CHECKING
+    if TYPE_CHECKING:
+        # Type alias for multi-framework tensor types
+        TensorLike = torch.Tensor | jnp.ndarray | np.ndarray | mx.array
+    else:
+        TensorLike = Any
+
 
 def _parse_objective_structure(
     objective_structure: tuple,
@@ -209,6 +222,48 @@ class MPAX_ctx:
             jnp.array(con_values),
         )
 
+    def mlx_to_data(
+        self,
+        quad_obj_values,
+        lin_obj_values,
+        con_values,
+    ) -> "MPAX_data":
+        print(f"[MLX DEBUG] MPAX_ctx.mlx_to_data: Called with quad_obj_values={quad_obj_values is not None}, lin_obj_values.shape={lin_obj_values.shape if hasattr(lin_obj_values, 'shape') else 'N/A'}, con_values.shape={con_values.shape if hasattr(con_values, 'shape') else 'N/A'}")
+        if mx is None:
+            raise ImportError(
+                "MLX interface requires 'mlx' package to be installed. "
+                "Install with: pip install mlx"
+            )
+
+        # Detect batch size and whether input was originally unbatched
+        if con_values.ndim == 1:
+            originally_unbatched = True
+            batch_size = 1
+            # Add batch dimension for uniform handling
+            con_values = mx.expand_dims(con_values, axis=1)
+            lin_obj_values = mx.expand_dims(lin_obj_values, axis=1)
+            quad_obj_values = mx.expand_dims(quad_obj_values, axis=1)
+        else:
+            originally_unbatched = False
+            batch_size = con_values.shape[1]
+
+        # Convert to JAX arrays for MPAX (MPAX uses JAX internally)
+        # MLX arrays can be converted to numpy first, then to JAX
+        import jax.numpy as jnp
+        quad_obj_values_jax = jnp.array(np.array(quad_obj_values))
+        lin_obj_values_jax = jnp.array(np.array(lin_obj_values))
+        con_values_jax = jnp.array(np.array(con_values))
+
+        print(f"[MLX DEBUG] MPAX_ctx.mlx_to_data: Returning MPAX_data with batch_size={batch_size}, originally_unbatched={originally_unbatched}")
+        return MPAX_data(
+            ctx=self,
+            quad_obj_values=quad_obj_values_jax,
+            lin_obj_values=lin_obj_values_jax,
+            con_values=con_values_jax,
+            batch_size=batch_size,
+            originally_unbatched=originally_unbatched,
+        )
+
 
 def _extract_rhs_vectors(
     con_vals_i: jnp.ndarray, ctx: "MPAX_ctx"
@@ -372,6 +427,25 @@ class MPAX_data:
             vjp_fun,
         )
 
+    def mlx_solve(self, solver_args=None):
+        print(f"[MLX DEBUG] MPAX_data.mlx_solve: Called with batch_size={self.batch_size}, solver_args={solver_args}")
+        if mx is None:
+            raise ImportError(
+                "MLX interface requires 'mlx' package to be installed. "
+                "Install with: pip install mlx"
+            )
+
+        # Use JAX solve (MPAX uses JAX internally)
+        print(f"[MLX DEBUG] MPAX_data.mlx_solve: Calling jax_solve")
+        primal_jax, dual_jax, vjp_fun = self.jax_solve(solver_args)
+
+        # Convert JAX arrays to MLX arrays
+        primal = mx.array(np.array(primal_jax), dtype=mx.float64)
+        dual = mx.array(np.array(dual_jax), dtype=mx.float64)
+
+        print(f"[MLX DEBUG] MPAX_data.mlx_solve: Completed, returning primal.shape={primal.shape}, dual.shape={dual.shape}")
+        return primal, dual, vjp_fun
+
     def jax_derivative(self, primal, dual, fun):
         raise NotImplementedError(
             "Backward pass is not implemented for MPAX solver. "
@@ -397,3 +471,27 @@ class MPAX_data:
             torch.utils.dlpack.from_dlpack(lin),
             torch.utils.dlpack.from_dlpack(con),
         )
+
+    def mlx_derivative(self, primal, dual, adj_batch):
+        print(f"[MLX DEBUG] MPAX_data.mlx_derivative: Called with primal.shape={primal.shape if hasattr(primal, 'shape') else 'N/A'}, dual.shape={dual.shape if hasattr(dual, 'shape') else 'N/A'}, batch_size={self.batch_size}")
+        if mx is None:
+            raise ImportError(
+                "MLX interface requires 'mlx' package to be installed. "
+                "Install with: pip install mlx"
+            )
+
+        # Convert MLX arrays to JAX arrays for derivative computation
+        import jax.numpy as jnp
+        primal_jax = jnp.array(np.array(primal))
+        dual_jax = jnp.array(np.array(dual))
+
+        # Compute derivatives using JAX
+        quad, lin, con = self.jax_derivative(primal_jax, dual_jax, adj_batch)
+
+        # Convert back to MLX
+        quad_mlx = mx.array(np.array(quad), dtype=mx.float64) if quad is not None else None
+        lin_mlx = mx.array(np.array(lin), dtype=mx.float64)
+        con_mlx = mx.array(np.array(con), dtype=mx.float64)
+
+        print(f"[MLX DEBUG] MPAX_data.mlx_derivative: Completed, returning quad={quad_mlx is not None}, lin.shape={lin_mlx.shape if lin_mlx is not None else None}, con.shape={con_mlx.shape if con_mlx is not None else None}")
+        return quad_mlx, lin_mlx, con_mlx
