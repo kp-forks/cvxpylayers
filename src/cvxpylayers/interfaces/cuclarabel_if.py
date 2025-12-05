@@ -165,9 +165,13 @@ class CUCLARABEL_ctx:
         self,
         objective_structure: tuple[np.ndarray, np.ndarray, tuple[int, int]] | None,
         constraint_structure: tuple[np.ndarray, np.ndarray, tuple[int, int]],
-        data: dict,
+        cone_dims: dict,
+        lower_bounds: None,
+        upper_bounds: None,
         options: dict | None = None,
     ):
+        assert lower_bounds is None and upper_bounds is None
+
         con_indices, con_ptr, (m, np1) = constraint_structure
         n = np1 - 1
         self.A_shape = (m, n)
@@ -211,7 +215,7 @@ class CUCLARABEL_ctx:
             self.P_csr_to_csc_permutation = None
 
         self.options = options
-        self.dims = data["dims"]
+        self.dims = cone_dims
 
     def jax_to_data(
         self,

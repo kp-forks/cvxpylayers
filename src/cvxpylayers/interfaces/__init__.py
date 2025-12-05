@@ -14,12 +14,11 @@ def get_solver_ctx(
         case "CUCLARABEL":
             from cvxpylayers.interfaces.cuclarabel_if import CUCLARABEL_ctx
 
-            return CUCLARABEL_ctx(
-                objective_structure=param_prob.reduced_P.problem_data_index,
-                constraint_structure=param_prob.reduced_A.problem_data_index,
-                data=data,
-                options=kwargs
-            )
+            ctx_cls = CUCLARABEL_ctx
+        case "MOREAU":
+            from cvxpylayers.interfaces.moreau_if import MOREAU_ctx
+
+            ctx_cls = MOREAU_ctx
         case "DIFFCP":
             from cvxpylayers.interfaces.diffcp_if import DIFFCP_ctx
 

@@ -15,7 +15,7 @@ authors = [
     { name = "S. Diamond" },
 ]
 maintainers = [{ name = "P. Nobel", email = "parthnobel@berkeley.edu" }]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "cvxpy>=1.7.4",
     "diffcp>=1.1.0",
@@ -52,6 +52,9 @@ metal = ["mlx-metal==0.27.1"]
 jax = ["jax>=0.4.0", "jaxlib>=0.4.0"]
 all = ["torch>=2.0.0", "jax>=0.4.0", "jaxlib>=0.4.0", "diffqcp>=0.4.2", "mlx==0.27.1",
     "mlx-metal==0.27.1"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cvxpylayers"]
@@ -120,7 +123,7 @@ max-line-length = 88
 #addopts = "--cov-report xml:coverage.xml --cov src.repository --cov-fail-under 0 --cov-append -m 'not integration' --cov-report term-missing"
 pythonpath = ["src"]
 log_cli = true
-log_cli_level = "DEBUG"
+log_cli_level = "WARNING"
 log_cli_format = "%(asctime)s [%(levelname)8s] %(message)s (%(filename)s:%(lineno)s)"
 log_cli_date_format = "%Y-%m-%d %H:%M:%S"
 testpaths = "tests"
