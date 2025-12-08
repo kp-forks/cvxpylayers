@@ -45,7 +45,7 @@ the layers are functionally equivalent. You will need to install
 separately, which can be done by following the instructions on their websites.
 
 CVXPYlayers has the following dependencies:
-* Python >= 3.9
+* Python >= 3.11
 * [NumPy](https://pypi.org/project/numpy/) >= 1.22.4
 * [CVXPY](https://github.com/cvxgrp/cvxpy) >= 1.7.4
 * [diffcp](https://github.com/cvxgrp/diffcp) >= 1.1.0
