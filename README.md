@@ -1,8 +1,8 @@
 ![cvxpylayers logo](cvxpylayers_logo.png)
 
-# cvxpylayers
+# CVXPYlayers
 
-cvxpylayers is a Python library for constructing differentiable convex
+CVXPYlayers is a Python library for constructing differentiable convex
 optimization layers in PyTorch, JAX, and MLX using CVXPY.
 A convex optimization layer solves a parametrized convex optimization problem
 in the forward pass to produce a solution.
@@ -23,7 +23,7 @@ parametrized convex optimization problems.
 - [Usage](#usage)
 - [Examples](#examples)
 - [Contributing](#contributing)
-- [Projects using cvxpylayers](#projects-using-cvxpylayers)
+- [Projects using CVXPYlayers](#projects-using-cvxpylayers)
 - [License](#license)
 - [Citing](#citing)
 
@@ -44,11 +44,16 @@ the layers are functionally equivalent. You will need to install
 [MLX](https://github.com/ml-explore/mlx)
 separately, which can be done by following the instructions on their websites.
 
-cvxpylayers has the following dependencies:
+CVXPYlayers has the following dependencies:
 * Python >= 3.9
-* [NumPy](https://pypi.org/project/numpy/)
-* [CVXPY](https://github.com/cvxgrp/cvxpy) >= 1.1.a4
-* [PyTorch](https://pytorch.org) >= 2.0, [JAX](https://github.com/google/jax) >= 0.2.12, or [MLX](https://github.com/ml-explore/mlx)
+* [NumPy](https://pypi.org/project/numpy/) >= 1.22.4
+* [CVXPY](https://github.com/cvxgrp/cvxpy) >= 1.7.4
+* [diffcp](https://github.com/cvxgrp/diffcp) >= 1.1.0
+
+Additionally, install one of the following frameworks:
+* [PyTorch](https://pytorch.org) >= 2.0
+* [JAX](https://github.com/google/jax) >= 0.4.0
+* [MLX](https://github.com/ml-explore/mlx)
 
 ### GPU-accelerated pathway (CVXPYlayers 1.0)
 
@@ -155,7 +160,7 @@ gradA, gradb = dcvxpylayer(A_jax, b_jax)
 ```
 
 ### Log-log convex programs
-Starting with version 0.1.3, cvxpylayers can also differentiate through log-log convex programs (LLCPs), which generalize geometric programs. Use the keyword argument `gp=True` when constructing a `CvxpyLayer` for an LLCP. Below is a simple usage example
+CVXPYlayers can also differentiate through log-log convex programs (LLCPs), which generalize geometric programs. Use the keyword argument `gp=True` when constructing a `CvxpyLayer` for an LLCP. Below is a simple usage example
 
 ```python
 import cvxpy as cp
@@ -189,7 +194,7 @@ sum_of_solution.backward()
 
 ## Solvers
 
-cvxpylayers supports multiple solvers including [Clarabel](https://github.com/oxfordcontrol/Clarabel.rs),
+CVXPYlayers supports multiple solvers including [Clarabel](https://github.com/oxfordcontrol/Clarabel.rs),
 [SCS](https://github.com/cvxgrp/scs), and [ECOS](https://github.com/embotech/ecos).
 For GPU acceleration, use [CuClarabel](https://github.com/oxfordcontrol/Clarabel.jl/tree/CuClarabel/).
 
@@ -218,7 +223,7 @@ Please make sure to update tests as appropriate.
 
 ### Running tests
 
-cvxpylayers uses the `pytest` framework for running tests.
+CVXPYlayers uses the `pytest` framework for running tests.
 To install `pytest`, run:
 ```bash
 pip install pytest
@@ -229,16 +234,16 @@ Execute the tests from the main directory of this repository with:
 pytest tests/
 ```
 
-## Projects using cvxpylayers
-Below is a list of projects using cvxpylayers. If you have used cvxpylayers in a project, you're welcome to make a PR to add it to this list.
+## Projects using CVXPYlayers
+Below is a list of projects using CVXPYlayers. If you have used CVXPYlayers in a project, you're welcome to make a PR to add it to this list.
 * [Learning Convex Optimization Control Policies](https://web.stanford.edu/~boyd/papers/learning_cocps.html)
 * [Learning Convex Optimization Models](https://web.stanford.edu/~boyd/papers/learning_copt_models.html)
 
 ## License
-cvxpylayers carries an Apache 2.0 license.
+CVXPYlayers carries an Apache 2.0 license.
 
 ## Citing
-If you use cvxpylayers for research, please cite our accompanying [NeurIPS paper](https://web.stanford.edu/~boyd/papers/pdf/diff_cvxpy.pdf):
+If you use CVXPYlayers for research, please cite our accompanying [NeurIPS paper](https://web.stanford.edu/~boyd/papers/pdf/diff_cvxpy.pdf):
 
 ```
 @inproceedings{cvxpylayers2019,
@@ -249,7 +254,7 @@ If you use cvxpylayers for research, please cite our accompanying [NeurIPS paper
 }
 ```
 
-If you use cvxpylayers to differentiate through a log-log convex program, please cite the accompanying [paper](https://web.stanford.edu/~boyd/papers/diff_dgp.html):
+If you use CVXPYlayers to differentiate through a log-log convex program, please cite the accompanying [paper](https://web.stanford.edu/~boyd/papers/diff_dgp.html):
 
 ```
 @article{agrawal2020differentiating,
