@@ -1,5 +1,3 @@
-![cvxpylayers logo](cvxpylayers_logo.png)
-
 # CVXPYlayers
 
 CVXPYlayers is a Python library for constructing differentiable convex
