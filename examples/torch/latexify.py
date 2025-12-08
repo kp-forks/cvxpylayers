@@ -40,7 +40,7 @@ def latexify(fig_width=None, fig_height=None, columns=1):
     # Note that this does not hold if you put two figures next to each other using
     # minipage. You need to use subplots.
     params = {'backend': 'ps',
-              'text.latex.preamble': ['\\usepackage{gensymb}'],
+              'text.latex.preamble': '\\usepackage{gensymb}',
               'axes.labelsize': 8, # fontsize for x and y labels (was 12 and before 10)
               'axes.titlesize': 8,
               'font.size': 8, # was 12 and before 10
