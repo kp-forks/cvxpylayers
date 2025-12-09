@@ -1,0 +1,69 @@
+/* Enhanced card styling */
+.sd-card {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    border-radius: 12px !important;
+}
+
+.sd-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.15) !important;
+}
+
+/* Framework-specific cards */
+.sd-card-pytorch {
+    border-top: 4px solid #ee4c2c !important;
+    background: linear-gradient(180deg, rgba(238, 76, 44, 0.05) 0%, transparent 100%) !important;
+}
+
+.sd-card-jax {
+    border-top: 4px solid #5e35b1 !important;
+    background: linear-gradient(180deg, rgba(94, 53, 177, 0.05) 0%, transparent 100%) !important;
+}
+
+.sd-card-mlx {
+    border-top: 4px solid #147ce5 !important;
+    background: linear-gradient(180deg, rgba(20, 124, 229, 0.05) 0%, transparent 100%) !important;
+}
+
+/* Card title styling */
+.sd-card-title {
+    font-weight: 600 !important;
+    font-size: 1.1rem !important;
+}
+
+/* Grid spacing */
+.sd-row {
+    margin-bottom: 1rem;
+}
+
+/* Section dividers */
+hr {
+    margin: 2.5rem 0 !important;
+    border: none !important;
+    border-top: 1px solid var(--color-background-border) !important;
+}
+
+/* Better heading spacing */
+h2 {
+    margin-top: 2rem !important;
+    margin-bottom: 1rem !important;
+}
+
+/* Dark mode adjustments */
+@media (prefers-color-scheme: dark) {
+    .sd-card:hover {
+        box-shadow: 0 12px 24px rgba(0, 0, 0, 0.4) !important;
+    }
+
+    .sd-card-pytorch {
+        background: linear-gradient(180deg, rgba(238, 76, 44, 0.1) 0%, transparent 100%) !important;
+    }
+
+    .sd-card-jax {
+        background: linear-gradient(180deg, rgba(94, 53, 177, 0.1) 0%, transparent 100%) !important;
+    }
+
+    .sd-card-mlx {
+        background: linear-gradient(180deg, rgba(20, 124, 229, 0.1) 0%, transparent 100%) !important;
+    }
+}
