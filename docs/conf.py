@@ -93,7 +93,6 @@ html_logo = None
 
 # Furo theme options
 html_theme_options = {
-    "announcement": "<b>v1.0 Released!</b> GPU acceleration with CuClarabel + MLX support for Apple Silicon",
     "source_repository": "https://github.com/cvxpy/cvxpylayers",
     "source_branch": "master",
     "source_directory": "docs/",

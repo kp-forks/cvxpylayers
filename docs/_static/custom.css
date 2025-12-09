@@ -1,3 +1,19 @@
+/* Announcement banner */
+.announcement {
+    font-weight: 500 !important;
+    letter-spacing: 0.01em;
+}
+
+.announcement a {
+    color: inherit !important;
+    text-decoration: underline;
+    margin-left: 0.5rem;
+}
+
+.announcement a:hover {
+    opacity: 0.8;
+}
+
 /* Enhanced card styling */
 .sd-card {
     transition: transform 0.2s ease, box-shadow 0.2s ease;
