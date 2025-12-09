@@ -2,6 +2,14 @@
 
 Build your first differentiable optimization layer in 4 steps.
 
+:::{admonition} Prerequisites
+:class: tip
+
+- Python 3.11+
+- CVXPY (`pip install cvxpy`)
+- One of: PyTorch, JAX, or MLX
+:::
+
 ```{raw} html
 <style>
 .step-number {

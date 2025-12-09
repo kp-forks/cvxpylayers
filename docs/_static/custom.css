@@ -115,6 +115,91 @@ p:has(> a > img[alt="PyPI"]) {
     text-align: center;
 }
 
+/* Sticky sidebar TOC */
+.sidebar-scroll {
+    position: sticky;
+    top: 1rem;
+    max-height: calc(100vh - 2rem);
+    overflow-y: auto;
+}
+
+/* Copy button feedback animation */
+.copybtn {
+    transition: all 0.2s ease;
+}
+
+.copybtn:hover {
+    transform: scale(1.1);
+}
+
+.copybtn.success {
+    animation: copied 0.4s ease;
+}
+
+@keyframes copied {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.3); background-color: #22c55e; }
+    100% { transform: scale(1); }
+}
+
+/* Code block language labels */
+div[class*="highlight-"] {
+    position: relative;
+}
+
+div.highlight-python::before {
+    content: "python";
+    position: absolute;
+    right: 2.5rem;
+    top: 0.3rem;
+    font-size: 0.65rem;
+    color: var(--color-foreground-muted);
+    opacity: 0.6;
+    font-family: var(--font-stack--monospace);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+div.highlight-bash::before {
+    content: "bash";
+    position: absolute;
+    right: 2.5rem;
+    top: 0.3rem;
+    font-size: 0.65rem;
+    color: var(--color-foreground-muted);
+    opacity: 0.6;
+    font-family: var(--font-stack--monospace);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+div.highlight-console::before {
+    content: "shell";
+    position: absolute;
+    right: 2.5rem;
+    top: 0.3rem;
+    font-size: 0.65rem;
+    color: var(--color-foreground-muted);
+    opacity: 0.6;
+    font-family: var(--font-stack--monospace);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+/* Version badge in sidebar */
+.sidebar-brand-text::after {
+    content: "v1.0.0";
+    display: inline-block;
+    font-size: 0.65rem;
+    background: var(--color-brand-primary);
+    color: white;
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    margin-left: 0.5rem;
+    vertical-align: middle;
+    font-weight: 600;
+}
+
 /* Dark mode adjustments */
 @media (prefers-color-scheme: dark) {
     .sd-card:hover {

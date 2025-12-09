@@ -43,14 +43,14 @@ Step-by-step introductions to CVXPYlayers:
 :gutter: 3
 
 :::{grid-item-card} PyTorch Tutorial
-:link: https://github.com/cvxpy/cvxpylayers/blob/master/examples/torch/tutorial.ipynb
+:link: https://colab.research.google.com/github/cvxpy/cvxpylayers/blob/master/examples/torch/tutorial.ipynb
 :link-type: url
 
 Complete walkthrough of defining problems, creating layers, and training.
 :::
 
 :::{grid-item-card} JAX Tutorial
-:link: https://github.com/cvxpy/cvxpylayers/blob/master/examples/jax/tutorial.ipynb
+:link: https://colab.research.google.com/github/cvxpy/cvxpylayers/blob/master/examples/jax/tutorial.ipynb
 :link-type: url
 
 Learn to use CVXPYlayers with JAX transformations.
@@ -66,35 +66,35 @@ Learn to use CVXPYlayers with JAX transformations.
 :gutter: 3
 
 :::{grid-item-card} Linear Quadratic Regulator (LQR)
-:link: https://github.com/cvxpy/cvxpylayers/blob/master/examples/torch/lqr.ipynb
+:link: https://colab.research.google.com/github/cvxpy/cvxpylayers/blob/master/examples/torch/lqr.ipynb
 :link-type: url
 
 Learn optimal value function parameters for LQR control.
 :::
 
 :::{grid-item-card} Constrained LQR
-:link: https://github.com/cvxpy/cvxpylayers/blob/master/examples/torch/constrained_lqr.ipynb
+:link: https://colab.research.google.com/github/cvxpy/cvxpylayers/blob/master/examples/torch/constrained_lqr.ipynb
 :link-type: url
 
 LQR with control input bounds and state constraints.
 :::
 
 :::{grid-item-card} Vehicle Path Planning
-:link: https://github.com/cvxpy/cvxpylayers/blob/master/examples/torch/vehicle.ipynb
+:link: https://colab.research.google.com/github/cvxpy/cvxpylayers/blob/master/examples/torch/vehicle.ipynb
 :link-type: url
 
 Autonomous vehicle trajectory optimization.
 :::
 
 :::{grid-item-card} Model Predictive Control
-:link: https://github.com/cvxpy/cvxpylayers/blob/master/examples/torch/constrained_mpc.ipynb
+:link: https://colab.research.google.com/github/cvxpy/cvxpylayers/blob/master/examples/torch/constrained_mpc.ipynb
 :link-type: url
 
 MPC with learned cost-to-go function.
 :::
 
 :::{grid-item-card} Approximate Dynamic Programming
-:link: https://github.com/cvxpy/cvxpylayers/blob/master/examples/torch/convex_approximate_dynamic_programming.ipynb
+:link: https://colab.research.google.com/github/cvxpy/cvxpylayers/blob/master/examples/torch/convex_approximate_dynamic_programming.ipynb
 :link-type: url
 
 Convex approximations for dynamic programming problems.
@@ -110,14 +110,14 @@ Convex approximations for dynamic programming problems.
 :gutter: 3
 
 :::{grid-item-card} Markowitz Portfolio
-:link: https://github.com/cvxpy/cvxpylayers/blob/master/examples/torch/markowitz_tuning.ipynb
+:link: https://colab.research.google.com/github/cvxpy/cvxpylayers/blob/master/examples/torch/markowitz_tuning.ipynb
 :link-type: url
 
 Classic mean-variance optimization with dynamic rebalancing.
 :::
 
 :::{grid-item-card} Portfolio with VIX
-:link: https://github.com/cvxpy/cvxpylayers/blob/master/examples/torch/Portfolio%20optimization%20with%20vix.ipynb
+:link: https://colab.research.google.com/github/cvxpy/cvxpylayers/blob/master/examples/torch/Portfolio%20optimization%20with%20vix.ipynb
 :link-type: url
 
 Volatility-aware portfolio optimization using VIX index.
@@ -133,28 +133,28 @@ Volatility-aware portfolio optimization using VIX index.
 :gutter: 3
 
 :::{grid-item-card} Monotonic Regression
-:link: https://github.com/cvxpy/cvxpylayers/blob/master/examples/torch/monotonic_output_regression.ipynb
+:link: https://colab.research.google.com/github/cvxpy/cvxpylayers/blob/master/examples/torch/monotonic_output_regression.ipynb
 :link-type: url
 
 Learning monotonic input-output relationships.
 :::
 
 :::{grid-item-card} Signal Denoising
-:link: https://github.com/cvxpy/cvxpylayers/blob/master/examples/torch/signal_denoising.ipynb
+:link: https://colab.research.google.com/github/cvxpy/cvxpylayers/blob/master/examples/torch/signal_denoising.ipynb
 :link-type: url
 
 Signal/image denoising with learned parameters.
 :::
 
 :::{grid-item-card} ReLU Layers
-:link: https://github.com/cvxpy/cvxpylayers/blob/master/examples/torch/ReLU%20Layers.ipynb
+:link: https://colab.research.google.com/github/cvxpy/cvxpylayers/blob/master/examples/torch/ReLU%20Layers.ipynb
 :link-type: url
 
 Optimization layers with ReLU activations.
 :::
 
 :::{grid-item-card} Data Poisoning Attack
-:link: https://github.com/cvxpy/cvxpylayers/blob/master/examples/torch/data_poisoning_attack.ipynb
+:link: https://colab.research.google.com/github/cvxpy/cvxpylayers/blob/master/examples/torch/data_poisoning_attack.ipynb
 :link-type: url
 
 Adversarial attacks on machine learning models.
@@ -170,14 +170,14 @@ Adversarial attacks on machine learning models.
 :gutter: 3
 
 :::{grid-item-card} Resource Allocation
-:link: https://github.com/cvxpy/cvxpylayers/blob/master/examples/torch/resource_allocation.ipynb
+:link: https://colab.research.google.com/github/cvxpy/cvxpylayers/blob/master/examples/torch/resource_allocation.ipynb
 :link-type: url
 
 Water and resource distribution optimization.
 :::
 
 :::{grid-item-card} Supply Chain
-:link: https://github.com/cvxpy/cvxpylayers/blob/master/examples/torch/supply_chain.ipynb
+:link: https://colab.research.google.com/github/cvxpy/cvxpylayers/blob/master/examples/torch/supply_chain.ipynb
 :link-type: url
 
 Supply chain network flow optimization.
@@ -193,7 +193,7 @@ Supply chain network flow optimization.
 :gutter: 3
 
 :::{grid-item-card} Stiffness Constants
-:link: https://github.com/cvxpy/cvxpylayers/blob/master/examples/torch/optimizing_stiffness_constants.ipynb
+:link: https://colab.research.google.com/github/cvxpy/cvxpylayers/blob/master/examples/torch/optimizing_stiffness_constants.ipynb
 :link-type: url
 
 Optimizing mechanical stiffness parameters.

@@ -141,8 +141,8 @@ pygments_dark_style = "monokai"
 html_css_files = ["custom.css"]
 
 # -- Options for autodoc -----------------------------------------------------
-# Only mock MLX (Apple Silicon only, not available on Intel)
-autodoc_mock_imports = ["mlx"]
+# Mock MLX for autodoc (mlx 0.26.3 works on Linux with glibc 2.31+)
+# autodoc_mock_imports = ["mlx"]
 
 # Suppress specific warnings
 suppress_warnings = ["autodoc.import_object"]
