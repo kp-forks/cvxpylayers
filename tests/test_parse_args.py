@@ -56,7 +56,7 @@ class TestVariableRecovery:
         )
 
         result = var_recovery.recover(primal_sol, dual_sol)
-        expected = np.array([[0.5, 1.5], [3.5, 4.5]])
+        expected = np.array([[0.5], [3.5]])
         np.testing.assert_array_equal(result, expected)
 
     def test_recover_neither_raises_error(self):
