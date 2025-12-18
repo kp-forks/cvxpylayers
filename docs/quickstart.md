@@ -61,7 +61,7 @@ problem = cp.Problem(
 
 ## <span class="step-number">2</span> Check DPP Compliance
 
-Your problem must follow [Disciplined Parametrized Programming](https://www.cvxpy.org/tutorial/advanced/index.html#disciplined-parametrized-programming) rules:
+Your problem must follow [Disciplined Parametrized Programming](https://www.cvxpy.org/tutorial/dpp/index.html) rules:
 
 ```python
 assert problem.is_dpp(), "Problem must be DPP-compliant"
