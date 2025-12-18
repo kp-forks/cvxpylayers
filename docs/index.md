@@ -37,7 +37,7 @@ Full `torch.nn.Module` integration with autograd support. The most popular choic
 :link-type: doc
 :class-card: sd-card-jax
 
-Works with `jax.grad`, `jax.jit`, and `jax.vmap`. Perfect for functional ML workflows.
+Works with `jax.grad` and `jax.vmap`. Support for `jax.jit` coming soon.
 :::
 
 :::{grid-item-card} **MLX**
@@ -142,7 +142,7 @@ Solve thousands of problem instances in parallel. First dimension is batch — j
 :::{grid-item-card} Multiple Solvers
 :class-card: sd-card-feature
 
-Clarabel, SCS, ECOS, and CuClarabel. Pick the right solver for your problem structure.
+Clarabel, SCS, and CuClarabel. Pick the right solver for your problem structure.
 :::
 
 ::::

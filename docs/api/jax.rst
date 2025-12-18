@@ -3,7 +3,7 @@ JAX API
 
 .. module:: cvxpylayers.jax
 
-The JAX layer is a callable class compatible with JAX transformations like ``jax.grad``, ``jax.jit``, and ``jax.vmap``.
+The JAX layer is a callable class compatible with JAX transformations like ``jax.grad`` and ``jax.vmap``. Support for ``jax.jit`` is coming soon.
 
 CvxpyLayer
 ----------
@@ -63,16 +63,9 @@ Use ``jax.grad`` to compute gradients:
 JIT Compilation
 ---------------
 
-The layer is compatible with ``jax.jit``:
+.. note::
 
-.. code-block:: python
-
-   @jax.jit
-   def solve_and_sum(A, b):
-       (x,) = layer(A, b)
-       return jnp.sum(x)
-
-   result = solve_and_sum(A_jax, b_jax)
+   Support for ``jax.jit`` is coming soon.
 
 Vectorization with vmap
 -----------------------

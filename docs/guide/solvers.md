@@ -6,11 +6,12 @@ CVXPYlayers supports multiple solver backends for different use cases.
 
 | Solver | Type | Best For |
 |--------|------|----------|
-| **diffcp** (default) | CPU | General use, most problem types |
-| **Clarabel** | CPU | SOCPs, SDPs, exponential cones |
-| **SCS** | CPU | Large-scale problems |
-| **ECOS** | CPU | Small to medium LPs/SOCPs |
-| **CuClarabel** | GPU | Large problems on NVIDIA GPUs |
+| **diffcp w/ SCS** (default) | CPU | General use, most problem types |
+| **diffcp w/ Clarabel** | CPU | Higher accuracy |
+| **MPAX*** | CPU | LPs/QPs |
+| **CuClarabel w/ diffqcp** | GPU | Large problems on NVIDIA GPUs |
+
+\* Gradient support is currently broken.
 
 ## Specifying a Solver
 
@@ -24,7 +25,8 @@ layer = CvxpyLayer(
     problem,
     parameters=[A, b],
     variables=[x],
-    solver=cp.CLARABEL  # Use Clarabel
+    solver=cp.DIFFCP,
+    solver_args={'solver': cp.CLARABEL}  # Use Clarabel
 )
 ```
 
@@ -79,12 +81,9 @@ solver_args = {
 (x,) = layer(A_tensor, b_tensor, solver_args=solver_args)
 ```
 
-If SCS still struggles, try ECOS or Clarabel:
+If SCS still struggles, try Clarabel:
 
 ```python
-# ECOS for smaller problems
-layer = CvxpyLayer(problem, parameters=[A, b], variables=[x], solver=cp.ECOS)
-
 # Clarabel for better cone support
 layer = CvxpyLayer(problem, parameters=[A, b], variables=[x], solver=cp.CLARABEL)
 ```
@@ -150,7 +149,7 @@ problem = cp.Problem(cp.Minimize(cp.sum_squares(A @ x - b)))
 A_t = torch.randn(n, n)
 b_t = torch.randn(n)
 
-for solver in [None, cp.CLARABEL, cp.SCS, cp.ECOS]:
+for solver in [None, cp.CLARABEL, cp.SCS]:
     layer = CvxpyLayer(problem, parameters=[A, b], variables=[x], solver=solver)
 
     start = time.time()

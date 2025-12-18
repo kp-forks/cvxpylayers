@@ -54,7 +54,7 @@ pip install cvxpylayers[jax]
 
 **Requirements:** JAX >= 0.4.0
 
-Functional style with `jax.grad`, `jax.jit`, and `jax.vmap`.
+Functional style with `jax.grad` and `jax.vmap`. Support for `jax.jit` coming soon.
 :::
 
 :::{tab-item} MLX
@@ -175,18 +175,22 @@ For large-scale problems, CuClarabel keeps everything on GPU with no CPU transfe
 Install from [julialang.org](https://julialang.org/)
 :::
 
-:::{grid-item-card} Step 2: CuClarabel
-```julia
-using Pkg
-Pkg.add(url="https://github.com/oxfordcontrol/Clarabel.jl", rev="CuClarabel")
-```
-:::
-
-:::{grid-item-card} Step 3: Python
+:::{grid-item-card} Step 2: Python
 ```bash
 pip install juliacall cupy diffqcp
 ```
 :::
+
+:::{grid-item-card} Step 3: CuClarabel
+In Python run:
+
+```python
+from juliacall import Main as jl 
+jl.seval('using Pkg; Pkg.add(url="https://github.com/oxfordcontrol/Clarabel.jl", rev="CuClarabel")')
+```
+:::
+
+
 
 ::::
 

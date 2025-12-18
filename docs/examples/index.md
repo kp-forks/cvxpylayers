@@ -20,7 +20,7 @@ Most popular for deep learning. Full `torch.nn.Module` integration with autograd
 :link-type: url
 :class-card: sd-card-jax
 
-Functional style with `jax.grad`, `jax.jit`, and `jax.vmap` compatibility.
+Functional style with `jax.grad` and `jax.vmap`. Support for `jax.jit` coming soon.
 :::
 
 :::{grid-item-card} **MLX**

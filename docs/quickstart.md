@@ -289,7 +289,7 @@ Solve multiple problems in parallel for 10-100x speedup.
 :link: guide/solvers
 :link-type: doc
 
-Choose the right solver: SCS, ECOS, Clarabel, CuClarabel.
+Choose the right solver: SCS, Clarabel, CuClarabel.
 :::
 
 :::{grid-item-card} Examples
