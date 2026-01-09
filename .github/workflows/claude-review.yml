@@ -1,0 +1,37 @@
+name: Claude Code Review
+
+on:
+  # Auto-trigger when non-draft PR is opened or draft becomes ready
+  pull_request:
+    types: [opened, ready_for_review]
+
+  # On-demand trigger via @claude mention in comments
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  claude-review:
+    runs-on: ubuntu-latest
+    # Skip draft PRs for auto-triggers, always run for comment triggers
+    if: |
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
+      github.event_name == 'issue_comment' ||
+      github.event_name == 'pull_request_review_comment'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Claude Code Review
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
