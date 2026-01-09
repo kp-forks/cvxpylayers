@@ -70,20 +70,6 @@ layer = CvxpyLayer(
 (eq_dual,) = layer(c_t, b_t)
 ```
 
-## Supported Constraint Types
-
-Dual variables work with all constraint types:
-
-| Constraint Type | Example | Dual Shape |
-|-----------------|---------|------------|
-| Equality | `A @ x == b` | Same as `b` |
-| Inequality | `x >= 0` | Same as `x` |
-| Second-order cone | `cp.norm(x) <= t` | `(n+1,)` |
-| Exponential cone | `cp.exp(x) <= t` | `(3,)` |
-| PSD | `X >> 0` | `(n, n)` |
-
-For PSD constraints, the dual is returned as a full symmetric matrix.
-
 ## Batching
 
 Dual variables work with batched parameters:
@@ -107,4 +93,4 @@ con = A @ x == b
 dual = con.dual_variables[0]  # First (usually only) dual variable
 ```
 
-Most constraints have a single dual variable. SOC and exponential cone constraints may have multiple.
+Most constraints have a single dual variable. SOC and exponential cone constraints have multiple.

@@ -94,6 +94,34 @@ class VariableRecovery:
         )
 
 
+def _detect_array_framework(arr: T) -> str:
+    """Detect the array framework (torch, jax, or numpy).
+
+    Args:
+        arr: Input array/tensor
+
+    Returns:
+        String: 'torch', 'jax', or 'numpy'
+    """
+    try:
+        import torch
+
+        if isinstance(arr, torch.Tensor):
+            return "torch"
+    except ImportError:
+        pass
+
+    try:
+        import jax
+
+        if isinstance(arr, jax.Array):
+            return "jax"
+    except ImportError:
+        pass
+
+    return "numpy"
+
+
 def _unpack_primal_svec(svec: T, n: int, batch: tuple) -> T:
     """Unpack symmetric primal variable from vectorized form.
 
@@ -116,14 +144,11 @@ def _unpack_primal_svec(svec: T, n: int, batch: tuple) -> T:
             rows.append(i)
             cols.append(j)
 
-    # Handle torch tensors (maintaining gradient flow)
-    try:
-        import torch
-        is_torch = isinstance(svec, torch.Tensor)
-    except ImportError:
-        is_torch = False
+    framework = _detect_array_framework(svec)
 
-    if is_torch:
+    if framework == "torch":
+        import torch
+
         rows_t = torch.tensor(rows, dtype=torch.long, device=svec.device)
         cols_t = torch.tensor(cols, dtype=torch.long, device=svec.device)
 
@@ -137,9 +162,7 @@ def _unpack_primal_svec(svec: T, n: int, batch: tuple) -> T:
         if batch:
             # Reshape to (batch_size, k) where k = n*(n+1)/2
             svec_flat = svec.reshape(batch_size, -1)
-            result = torch.zeros(
-                batch_size, n, n, dtype=svec.dtype, device=svec.device
-            )
+            result = torch.zeros(batch_size, n, n, dtype=svec.dtype, device=svec.device)
             # Fill upper and lower triangles
             result[:, rows_t, cols_t] = svec_flat
             result[:, cols_t, rows_t] = svec_flat
@@ -149,33 +172,26 @@ def _unpack_primal_svec(svec: T, n: int, batch: tuple) -> T:
             result[rows_t, cols_t] = svec
             result[cols_t, rows_t] = svec
         return result
-    else:
-        # JAX/numpy path - detect JAX arrays
-        try:
-            import jax
-            import jax.numpy as jnp
-            is_jax = isinstance(svec, jax.Array)
-        except ImportError:
-            is_jax = False
+    elif framework == "jax":
+        import jax.numpy as jnp
 
-        if is_jax:
-            rows_arr = jnp.array(rows)
-            cols_arr = jnp.array(cols)
-            out_shape = batch + (n, n)
-            result = jnp.zeros(out_shape, dtype=svec.dtype)
-            result = result.at[..., rows_arr, cols_arr].set(svec)
-            result = result.at[..., cols_arr, rows_arr].set(svec)
-            return result
-        else:
-            # Pure numpy path
-            rows_np = np.array(rows)
-            cols_np = np.array(cols)
-            svec_np = np.asarray(svec)
-            out_shape = batch + (n, n)
-            result = np.zeros(out_shape, dtype=svec_np.dtype)
-            result[..., rows_np, cols_np] = svec_np
-            result[..., cols_np, rows_np] = svec_np
-            return result
+        rows_arr = jnp.array(rows)
+        cols_arr = jnp.array(cols)
+        out_shape = batch + (n, n)
+        result = jnp.zeros(out_shape, dtype=svec.dtype)
+        result = result.at[..., rows_arr, cols_arr].set(svec)
+        result = result.at[..., cols_arr, rows_arr].set(svec)
+        return result
+    else:
+        # Pure numpy path
+        rows_np = np.array(rows)
+        cols_np = np.array(cols)
+        svec_np = np.asarray(svec)
+        out_shape = batch + (n, n)
+        result = np.zeros(out_shape, dtype=svec_np.dtype)
+        result[..., rows_np, cols_np] = svec_np
+        result[..., cols_np, rows_np] = svec_np
+        return result
 
 
 def _unpack_svec(svec: T, n: int, batch: tuple) -> T:
@@ -204,14 +220,11 @@ def _unpack_svec(svec: T, n: int, batch: tuple) -> T:
     sqrt2 = np.sqrt(2.0)
     scale = np.array([1.0 if d else 1.0 / sqrt2 for d in is_diag])
 
-    # Handle torch tensors (maintaining gradient flow)
-    try:
-        import torch
-        is_torch = isinstance(svec, torch.Tensor)
-    except ImportError:
-        is_torch = False
+    framework = _detect_array_framework(svec)
 
-    if is_torch:
+    if framework == "torch":
+        import torch
+
         rows_t = torch.tensor(rows, dtype=torch.long, device=svec.device)
         cols_t = torch.tensor(cols, dtype=torch.long, device=svec.device)
         scale_t = torch.tensor(scale, dtype=svec.dtype, device=svec.device)
@@ -227,9 +240,7 @@ def _unpack_svec(svec: T, n: int, batch: tuple) -> T:
         if batch:
             # Reshape to (batch_size, k) where k = n*(n+1)/2
             scaled_flat = scaled_svec.reshape(batch_size, -1)
-            result = torch.zeros(
-                batch_size, n, n, dtype=svec.dtype, device=svec.device
-            )
+            result = torch.zeros(batch_size, n, n, dtype=svec.dtype, device=svec.device)
             # Fill lower and upper triangles
             result[:, rows_t, cols_t] = scaled_flat
             result[:, cols_t, rows_t] = scaled_flat
@@ -239,36 +250,29 @@ def _unpack_svec(svec: T, n: int, batch: tuple) -> T:
             result[rows_t, cols_t] = scaled_svec
             result[cols_t, rows_t] = scaled_svec
         return result
-    else:
-        # JAX/numpy path - detect JAX arrays
-        try:
-            import jax
-            import jax.numpy as jnp
-            is_jax = isinstance(svec, jax.Array)
-        except ImportError:
-            is_jax = False
+    elif framework == "jax":
+        import jax.numpy as jnp
 
-        if is_jax:
-            rows_arr = jnp.array(rows)
-            cols_arr = jnp.array(cols)
-            scale_arr = jnp.array(scale)
-            scaled_svec = svec * scale_arr
-            out_shape = batch + (n, n)
-            result = jnp.zeros(out_shape, dtype=svec.dtype)
-            result = result.at[..., rows_arr, cols_arr].set(scaled_svec)
-            result = result.at[..., cols_arr, rows_arr].set(scaled_svec)
-            return result
-        else:
-            # Pure numpy path
-            rows_np = np.array(rows)
-            cols_np = np.array(cols)
-            svec_np = np.asarray(svec)
-            scaled_svec = svec_np * scale
-            out_shape = batch + (n, n)
-            result = np.zeros(out_shape, dtype=svec_np.dtype)
-            result[..., rows_np, cols_np] = scaled_svec
-            result[..., cols_np, rows_np] = scaled_svec
-            return result
+        rows_arr = jnp.array(rows)
+        cols_arr = jnp.array(cols)
+        scale_arr = jnp.array(scale)
+        scaled_svec = svec * scale_arr
+        out_shape = batch + (n, n)
+        result = jnp.zeros(out_shape, dtype=svec.dtype)
+        result = result.at[..., rows_arr, cols_arr].set(scaled_svec)
+        result = result.at[..., cols_arr, rows_arr].set(scaled_svec)
+        return result
+    else:
+        # Pure numpy path
+        rows_np = np.array(rows)
+        cols_np = np.array(cols)
+        svec_np = np.asarray(svec)
+        scaled_svec = svec_np * scale
+        out_shape = batch + (n, n)
+        result = np.zeros(out_shape, dtype=svec_np.dtype)
+        result[..., rows_np, cols_np] = scaled_svec
+        result[..., cols_np, rows_np] = scaled_svec
+        return result
 
 
 @dataclass
@@ -343,9 +347,7 @@ class LayersContext:
         return ()
 
 
-def _find_parent_constraint(
-    var: cp.Variable, problem: cp.Problem
-) -> cp.Constraint | None:
+def _find_parent_constraint(var: cp.Variable, problem: cp.Problem) -> cp.Constraint | None:
     """Find the constraint whose dual_variables contains this variable.
 
     Args:
@@ -562,7 +564,8 @@ def parse_args(
     constr_id_to_slice = _build_constr_id_to_slice(param_prob)
 
     # Build variable recovery info for each requested variable
-    # Variables can be either primal (from problem.variables()) or dual (from constraint.dual_variables)
+    # Variables can be either primal (from problem.variables()) or dual
+    # (from constraint.dual_variables)
     primal_vars = set(problem.variables())
     var_recover = []
     for v in variables:
@@ -571,11 +574,7 @@ def parse_args(
             start = param_prob.var_id_to_col[v.id]
             # Check if variable is symmetric (uses svec format in solver)
             # A symmetric variable must be at least 2D with shape (n, n)
-            is_sym = (
-                hasattr(v, "is_symmetric")
-                and v.is_symmetric()
-                and len(v.shape) >= 2
-            )
+            is_sym = hasattr(v, "is_symmetric") and v.is_symmetric() and len(v.shape) >= 2
             if is_sym:
                 # Symmetric variables use svec format: n*(n+1)//2 elements
                 n = v.shape[0]
