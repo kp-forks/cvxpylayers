@@ -135,12 +135,20 @@ class LayersContext:
         return ()
 
 
-def _find_parent_constraint(var: cp.Variable, problem: cp.Problem) -> cp.Constraint | None:
-    """Find the constraint whose dual_variables contains this variable."""
+def _build_dual_var_map(problem: cp.Problem) -> dict[int, cp.Constraint]:
+    """Build mapping from dual variable ID to parent constraint.
+
+    Args:
+        problem: CVXPY problem
+
+    Returns:
+        Dictionary mapping dual variable ID to its parent constraint
+    """
+    dual_var_to_constraint: dict[int, cp.Constraint] = {}
     for con in problem.constraints:
-        if any(var.id == dv.id for dv in con.dual_variables):
-            return con
-    return None
+        for dv in con.dual_variables:
+            dual_var_to_constraint[dv.id] = con
+    return dual_var_to_constraint
 
 
 def _dual_var_offset(var: cp.Variable, constraint: cp.Constraint) -> int:
@@ -245,7 +253,7 @@ def _validate_problem(
     variables: list[cp.Variable],
     parameters: list[cp.Parameter],
     gp: bool,
-) -> None:
+) -> dict[int, cp.Constraint]:
     """Validate that the problem is DPP-compliant and inputs are well-formed.
 
     Args:
@@ -253,6 +261,9 @@ def _validate_problem(
         variables: List of CVXPY variables to track (can include constraint dual variables)
         parameters: List of CVXPY parameters
         gp: Whether this is a geometric program (GP)
+
+    Returns:
+        Dictionary mapping dual variable ID to parent constraint
 
     Raises:
         ValueError: If problem is not DPP-compliant or inputs are invalid
@@ -273,16 +284,20 @@ def _validate_problem(
     if not isinstance(variables, list) and not isinstance(variables, tuple):
         raise ValueError("The layer's variables must be provided as a list or tuple")
 
+    # Build dual variable map for O(1) constraint lookup
+    dual_var_to_constraint = _build_dual_var_map(problem)
+
     # Validate variables: each must be either a primal variable or a constraint dual variable
     primal_vars = set(problem.variables())
     for v in variables:
         if v in primal_vars:
             continue  # Valid primal variable
-        parent_con = _find_parent_constraint(v, problem)
-        if parent_con is None:
+        if v.id not in dual_var_to_constraint:
             raise ValueError(
                 f"Variable {v} must be a subset of problem.variables or a constraint dual variable"
             )
+
+    return dual_var_to_constraint
 
 
 def _build_user_order_mapping(
@@ -362,7 +377,7 @@ def parse_args(
         LayersContext containing canonicalized problem data
     """
     # Validate problem is DPP (disciplined parametrized programming)
-    _validate_problem(problem, variables, parameters, gp)
+    dual_var_to_constraint = _validate_problem(problem, variables, parameters, gp)
 
     if solver is None:
         solver = "DIFFCP"
@@ -423,8 +438,7 @@ def parse_args(
         if v in primal_vars:
             var_recover.append(_build_primal_recovery(v, param_prob))
         else:
-            parent_con = _find_parent_constraint(v, problem)
-            assert parent_con is not None  # Already validated
+            parent_con = dual_var_to_constraint[v.id]
             var_recover.append(_build_dual_recovery(v, parent_con, constr_id_to_slice))
 
     return LayersContext(

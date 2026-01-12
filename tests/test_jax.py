@@ -235,6 +235,19 @@ def test_not_enough_parameters_at_call_time():
         layer(lam_jax)
 
 
+def test_none_parameter_at_call_time():
+    """Test that passing None as a parameter raises an appropriate error."""
+    x = cp.Variable(1)
+    lam = cp.Parameter(1, nonneg=True)
+    lam2 = cp.Parameter(1, nonneg=True)
+    objective = lam * cp.norm(x, 1) + lam2 * cp.sum_squares(x)
+    prob = cp.Problem(cp.Minimize(objective))
+    layer = CvxpyLayer(prob, [lam, lam2], [x])
+    lam_jax = jnp.ones(1)
+    with pytest.raises(AttributeError):
+        layer(lam_jax, None)
+
+
 def test_too_many_variables():
     x = cp.Variable(1)
     y = cp.Variable(1)
