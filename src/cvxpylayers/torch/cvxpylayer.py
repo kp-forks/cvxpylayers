@@ -100,7 +100,8 @@ def _flatten_and_batch_params(
         device=params[0].device,
     )
 
-    p_stack = torch.cat([p for p in flattened_params if p is not None], -1)
+    assert all(p is not None for p in flattened_params), "All parameters must be assigned"
+    p_stack = torch.cat(cast(list[torch.Tensor], flattened_params), -1)
     # When batched, p_stack is (batch_size, num_params) but we need (num_params, batch_size)
     if batch:
         p_stack = p_stack.T

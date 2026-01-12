@@ -93,7 +93,8 @@ def _flatten_and_batch_params(
     # Add constant 1.0 column for offset terms in canonical form
     flattened_params[-1] = jnp.ones(batch + (1,), dtype=params[0].dtype)
 
-    p_stack = jnp.concatenate([p for p in flattened_params if p is not None], -1)
+    assert all(p is not None for p in flattened_params), "All parameters must be assigned"
+    p_stack = jnp.concatenate(cast(list[jnp.ndarray], flattened_params), -1)
     # When batched, p_stack is (batch_size, num_params) but we need (num_params, batch_size)
     if batch:
         p_stack = p_stack.T

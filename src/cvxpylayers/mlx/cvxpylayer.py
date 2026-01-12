@@ -113,7 +113,8 @@ def _flatten_and_batch_params(
     # Add constant 1.0 column for offset terms in canonical form
     flattened_params[-1] = mx.ones(batch + (1,), dtype=params[0].dtype)
 
-    p_stack = mx.concatenate([p for p in flattened_params if p is not None], axis=-1)
+    assert all(p is not None for p in flattened_params), "All parameters must be assigned"
+    p_stack = mx.concatenate(cast(list[mx.array], flattened_params), axis=-1)
     # When batched, p_stack is (batch_size, num_params) but we need (num_params, batch_size)
     if batch:
         p_stack = mx.transpose(p_stack)
