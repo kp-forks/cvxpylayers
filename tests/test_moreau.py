@@ -710,3 +710,136 @@ def test_solver_args_actually_used():
     assert settings.max_iter == 42, (
         f"max_iter not applied to settings: expected 42, got {settings.max_iter}"
     )
+
+
+# ============================================================================
+# Setup caching tests (constant P/A optimization)
+# ============================================================================
+
+
+def test_constant_PA_detection():
+    """Test that constant P/A is detected and setup is cached.
+
+    When only q (linear objective) depends on parameters, and P and A are constant,
+    setup() should be called once during solver creation, not on every forward pass.
+
+    Problem: minimize c'x subject to x >= 0, sum(x) = 1
+    Here P=None, A is constant (constraint structure), only q=c depends on parameter.
+    """
+    n = 4
+    x = cp.Variable(n)
+    c = cp.Parameter(n)
+
+    # Only c (linear cost) is parametrized; P=None, A is constant
+    problem = cp.Problem(cp.Minimize(c @ x), [x >= 0, cp.sum(x) == 1])
+
+    layer = CvxpyLayer(problem, parameters=[c], variables=[x], solver="MOREAU")
+
+    # Verify PA_is_constant is True
+    assert layer.ctx.solver_ctx.PA_is_constant, (
+        "Expected PA_is_constant=True for problem with only linear cost parametrized"
+    )
+
+    # Verify solutions are correct
+    # For minimize c'x s.t. x >= 0, sum(x) = 1: optimal puts all weight on smallest c_i
+    c_val = torch.tensor([3.0, 1.0, 4.0, 2.0], requires_grad=True)
+    (x_sol,) = layer(c_val)
+
+    # Optimal solution: x = e_i where i = argmin(c)
+    expected = torch.zeros(n)
+    expected[1] = 1.0  # c[1] = 1.0 is minimum
+    assert torch.allclose(x_sol, expected, atol=1e-4), f"Expected {expected}, got {x_sol}"
+
+
+def test_constant_PA_multiple_forward_passes():
+    """Test that cached setup works correctly across multiple forward passes.
+
+    Problem: minimize c'x subject to x >= 0, sum(x) = 1
+    """
+    n = 3
+    x = cp.Variable(n)
+    c = cp.Parameter(n)
+
+    problem = cp.Problem(cp.Minimize(c @ x), [x >= 0, cp.sum(x) == 1])
+    layer = CvxpyLayer(problem, parameters=[c], variables=[x], solver="MOREAU")
+
+    # Verify PA_is_constant
+    assert layer.ctx.solver_ctx.PA_is_constant
+
+    # Run multiple forward passes with different c values
+    test_cases = [
+        torch.tensor([1.0, 2.0, 3.0]),  # min at index 0
+        torch.tensor([3.0, 1.0, 2.0]),  # min at index 1
+        torch.tensor([2.0, 3.0, 1.0]),  # min at index 2
+    ]
+    for i, c_val in enumerate(test_cases):
+        c_val = c_val.clone().requires_grad_(True)
+        (x_sol,) = layer(c_val)
+
+        # Optimal solution puts all weight on minimum c
+        expected = torch.zeros(n)
+        expected[c_val.detach().argmin()] = 1.0
+        assert torch.allclose(x_sol, expected, atol=1e-4), (
+            f"Pass {i}: Expected {expected}, got {x_sol}"
+        )
+
+
+def test_constant_PA_gradients():
+    """Test that gradients work correctly when P/A are constant.
+
+    Problem: minimize c'x subject to x >= 0, sum(x) = 1
+    For c = [1, 2, 3], optimal x* = [1, 0, 0], so objective = c[0] = 1.
+    Gradient of objective w.r.t. c is x* = [1, 0, 0].
+    """
+    n = 3
+    x = cp.Variable(n)
+    c = cp.Parameter(n)
+
+    problem = cp.Problem(cp.Minimize(c @ x), [x >= 0, cp.sum(x) == 1])
+    layer = CvxpyLayer(problem, parameters=[c], variables=[x], solver="MOREAU")
+
+    assert layer.ctx.solver_ctx.PA_is_constant
+
+    c_val = torch.tensor([1.0, 2.0, 3.0], requires_grad=True)
+    (x_sol,) = layer(c_val)
+
+    # Forward pass: optimal x = [1, 0, 0]
+    expected_x = torch.tensor([1.0, 0.0, 0.0])
+    assert torch.allclose(x_sol, expected_x, atol=1e-4), f"Expected {expected_x}, got {x_sol}"
+
+    # Backward pass: d(c'x)/dc = x
+    loss = (c_val * x_sol).sum()  # This is c'x
+    loss.backward()
+
+    # Gradient should be x* = [1, 0, 0]
+    expected_grad = expected_x
+    assert c_val.grad is not None
+    assert torch.allclose(c_val.grad, expected_grad, atol=1e-4), (
+        f"Expected grad {expected_grad}, got {c_val.grad}"
+    )
+
+
+def test_parametrized_PA_not_cached():
+    """Test that when P or A depend on parameters, setup is not cached."""
+    n = 3
+    x = cp.Variable(n)
+    A = cp.Parameter((1, n))  # Constraint matrix is parametrized
+    b = cp.Parameter(1)
+
+    problem = cp.Problem(cp.Minimize(cp.sum_squares(x)), [A @ x == b])
+    layer = CvxpyLayer(problem, parameters=[A, b], variables=[x], solver="MOREAU")
+
+    # PA_is_constant should be False since A is parametrized
+    assert not layer.ctx.solver_ctx.PA_is_constant, (
+        "Expected PA_is_constant=False when A is parametrized"
+    )
+
+    # Verify solutions are still correct
+    A_val = torch.tensor([[1.0, 1.0, 1.0]])
+    b_val = torch.tensor([3.0])
+
+    (x_sol,) = layer(A_val, b_val)
+
+    # Check constraint satisfaction: sum(x) = 3
+    constraint_value = (A_val @ x_sol.unsqueeze(-1)).squeeze()
+    assert torch.allclose(constraint_value, b_val, atol=1e-4)

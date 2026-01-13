@@ -171,6 +171,8 @@ class MOREAU_ctx:
         lower_bounds,
         upper_bounds,
         options=None,
+        reduced_P_mat=None,
+        reduced_A_mat=None,
     ):
         # Convert constraint matrix from CSC to CSR
         A_shuffle, A_structure, A_shape, b_idx = convert_csc_structure_to_csr_structure(
@@ -217,6 +219,35 @@ class MOREAU_ctx:
         self._torch_solver_cuda = None  # CUDA solver (moreau.torch.Solver) with lazy init
         self._torch_solver_cpu = None  # CPU solver (moreau.torch.Solver) with lazy init
 
+        # Detect if P and A are constant (don't depend on any parameters)
+        # Matrices are parametrized: each column corresponds to a parameter, last column is constant
+        # If all non-constant columns are zero, the matrix values are fixed
+        self.PA_is_constant = (
+            (reduced_P_mat is None or reduced_P_mat[:, :-1].nnz == 0)
+            and reduced_A_mat is not None
+            and reduced_A_mat[:, :-1].nnz == 0
+        )
+
+        if self.PA_is_constant:
+            # Pre-extract constant values (last column only, in CSR order)
+            if reduced_P_mat is not None:
+                P_csr = reduced_P_mat[:, -1].tocsr()
+                self._P_const_values = (
+                    P_csr.data[self.P_idx] if self.P_idx is not None else P_csr.data
+                )
+            else:
+                self._P_const_values = np.array([], dtype=np.float64)
+            A_csr = reduced_A_mat[:, -1].tocsr()
+            self._A_const_values = -A_csr.data[self.A_idx]  # Negated for Ax + s = b form
+            # Extract b values
+            b_raw = A_csr.data[self.b_idx] if self.b_idx.size > 0 else np.array([])
+            self._b_const = np.zeros(self.A_shape[0], dtype=np.float64)
+            self._b_const[self.b_idx] = b_raw
+        else:
+            self._P_const_values = None
+            self._A_const_values = None
+            self._b_const = None
+
     @property
     def cones(self):
         """Get moreau.Cones (unified for NumPy and PyTorch paths)."""
@@ -242,6 +273,46 @@ class MOREAU_ctx:
 
         return settings
 
+    def _create_torch_solver(self, device: str):
+        """Create a moreau.torch.Solver for the specified device.
+
+        Called lazily on first use. If P/A are constant, also calls setup().
+        """
+        if moreau_torch is None:
+            raise ImportError(
+                "Moreau solver requires 'moreau' package. Install with: pip install moreau"
+            )
+        if device == "cuda" and not moreau.device_available("cuda"):
+            raise ImportError(
+                "Moreau CUDA backend requires 'moreau' package with CUDA support. "
+                "Install with: pip install moreau[cuda]"
+            )
+
+        settings = self._get_settings(enable_grad=True)
+        settings.device = device
+        solver = moreau_torch.Solver(
+            n=self.P_shape[0],
+            m=self.A_shape[0],
+            P_row_offsets=torch.tensor(self.P_row_offsets, dtype=torch.int64),
+            P_col_indices=torch.tensor(self.P_col_indices, dtype=torch.int64),
+            A_row_offsets=torch.tensor(self.A_row_offsets, dtype=torch.int64),
+            A_col_indices=torch.tensor(self.A_col_indices, dtype=torch.int64),
+            cones=self.cones,
+            settings=settings,
+        )
+
+        # If P and A are constant, do setup once now (expensive factorization)
+        if self.PA_is_constant:
+            P_values = torch.tensor(
+                self._P_const_values, dtype=torch.float64, device=device
+            ).unsqueeze(0)
+            A_values = torch.tensor(
+                self._A_const_values, dtype=torch.float64, device=device
+            ).unsqueeze(0)
+            solver.setup(P_values, A_values)
+
+        return solver
+
     def get_torch_solver(self, device: str):
         """Get moreau.torch.Solver for the specified device (lazy init).
 
@@ -253,42 +324,11 @@ class MOREAU_ctx:
         """
         if device == "cuda":
             if self._torch_solver_cuda is None:
-                if moreau_torch is None or not moreau.device_available("cuda"):
-                    raise ImportError(
-                        "Moreau CUDA backend requires 'moreau' package with CUDA support. "
-                        "Install with: pip install moreau[cuda]"
-                    )
-                settings = self._get_settings(enable_grad=True)
-                settings.device = "cuda"
-                self._torch_solver_cuda = moreau_torch.Solver(
-                    n=self.P_shape[0],
-                    m=self.A_shape[0],
-                    P_row_offsets=torch.tensor(self.P_row_offsets, dtype=torch.int64),
-                    P_col_indices=torch.tensor(self.P_col_indices, dtype=torch.int64),
-                    A_row_offsets=torch.tensor(self.A_row_offsets, dtype=torch.int64),
-                    A_col_indices=torch.tensor(self.A_col_indices, dtype=torch.int64),
-                    cones=self.cones,
-                    settings=settings,
-                )
+                self._torch_solver_cuda = self._create_torch_solver("cuda")
             return self._torch_solver_cuda
         else:
             if self._torch_solver_cpu is None:
-                if moreau_torch is None:
-                    raise ImportError(
-                        "Moreau solver requires 'moreau' package. Install with: pip install moreau"
-                    )
-                settings = self._get_settings(enable_grad=True)
-                settings.device = "cpu"
-                self._torch_solver_cpu = moreau_torch.Solver(
-                    n=self.P_shape[0],
-                    m=self.A_shape[0],
-                    P_row_offsets=torch.tensor(self.P_row_offsets, dtype=torch.int64),
-                    P_col_indices=torch.tensor(self.P_col_indices, dtype=torch.int64),
-                    A_row_offsets=torch.tensor(self.A_row_offsets, dtype=torch.int64),
-                    A_col_indices=torch.tensor(self.A_col_indices, dtype=torch.int64),
-                    cones=self.cones,
-                    settings=settings,
-                )
+                self._torch_solver_cpu = self._create_torch_solver("cpu")
             return self._torch_solver_cpu
 
     def torch_to_data(self, quad_obj_values, lin_obj_values, con_values) -> "MOREAU_data":
@@ -381,6 +421,8 @@ class MOREAU_ctx:
             P_eval_size=quad_obj_values.shape[0] if quad_obj_values is not None else 0,
             q_eval_size=lin_obj_values.shape[0],
             A_eval_size=con_values.shape[0],
+            # Whether setup() was already called (P/A constant optimization)
+            setup_cached=self.PA_is_constant,
         )
 
     def jax_to_data(self, quad_obj_values, lin_obj_values, con_values) -> "MOREAU_data_jax":
@@ -486,6 +528,9 @@ class MOREAU_data:
     q_eval_size: int  # Size of q_eval tensor (n+1)
     A_eval_size: int  # Size of A_eval tensor
 
+    # Whether setup() was already called in get_torch_solver (P/A constant case)
+    setup_cached: bool = False
+
     def torch_solve(self, solver_args=None):
         """Solve using moreau.torch.Solver with autograd support.
 
@@ -500,13 +545,20 @@ class MOREAU_data:
             )
 
         # Enable gradients on inputs for Moreau's autograd
-        P_values = self.P_values.requires_grad_(True)
-        A_values = self.A_values.requires_grad_(True)
         q = self.q.requires_grad_(True)
         b = self.b.requires_grad_(True)
 
-        # Three-step API: setup then solve
-        self.solver.setup(P_values, A_values)
+        # Setup is expensive - skip if already done with constant P/A
+        if self.setup_cached:
+            # P and A are constant; setup was called once during solver creation
+            P_values = self.P_values
+            A_values = self.A_values
+        else:
+            # P and/or A depend on parameters; need setup each call
+            P_values = self.P_values.requires_grad_(True)
+            A_values = self.A_values.requires_grad_(True)
+            self.solver.setup(P_values, A_values)
+
         solution = self.solver.solve(q, b, self.lower, self.upper)
 
         # Extract primal and dual - keep connected to autograd graph (don't detach!)
