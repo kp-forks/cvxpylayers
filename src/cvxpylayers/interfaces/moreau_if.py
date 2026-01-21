@@ -4,12 +4,11 @@ Moreau is a conic optimization solver that solves problems of the form:
     minimize    (1/2)x'Px + q'x
     subject to  Ax + s = b
                 s in K
-                l <= x <= u
 
 where K is a product of cones.
 
 Uses Moreau's native PyTorch and JAX solvers with built-in automatic differentiation:
-- PyTorch: moreau.torch.Solver with three-step API and autograd support
+- PyTorch: moreau.torch.Solver with two-step API (setup + solve) and autograd support
 - JAX: moreau.jax.Solver with custom_vjp for gradients
 """
 
@@ -159,17 +158,11 @@ class MOREAU_ctx:
     cones: Any  # moreau.Cones (unified for NumPy and PyTorch)
     dims: dict
 
-    # Variable bounds (fixed at construction)
-    lower: np.ndarray  # Lower bounds, shape (n,)
-    upper: np.ndarray  # Upper bounds, shape (n,)
-
     def __init__(
         self,
         objective_structure,
         constraint_structure,
         dims,
-        lower_bounds,
-        upper_bounds,
         options=None,
         reduced_P_mat=None,
         reduced_A_mat=None,
@@ -208,11 +201,6 @@ class MOREAU_ctx:
         # Store dimensions
         self.dims = dims
         self.options = options or {}
-
-        # Store bounds (fixed at construction)
-        n = P_shape[0]
-        self.lower = lower_bounds if lower_bounds is not None else np.full(n, -np.inf)
-        self.upper = upper_bounds if upper_bounds is not None else np.full(n, np.inf)
 
         # Create cones and solver lazily
         self._cones = None
@@ -348,6 +336,13 @@ class MOREAU_ctx:
             cones=self.cones,
             settings=settings,
         )
+
+        # If P and A are constant, do setup once now (like PyTorch)
+        if self.PA_is_constant:
+            P_values = jnp.array(self._P_const_values, dtype=jnp.float64)
+            A_values = jnp.array(self._A_const_values, dtype=jnp.float64)
+            solver.setup(P_values, A_values)
+
         return solver
 
     def get_jax_solver(self):
@@ -416,12 +411,6 @@ class MOREAU_ctx:
         q = q.T.contiguous().to(device=device, dtype=torch.float64)  # (batch, n)
         b = b.T.contiguous().to(device=device, dtype=torch.float64)  # (batch, m)
 
-        # Convert bounds to torch and broadcast to batch
-        lower = torch.tensor(self.lower, dtype=torch.float64, device=device)  # (n,)
-        upper = torch.tensor(self.upper, dtype=torch.float64, device=device)  # (n,)
-        lower = lower.unsqueeze(0).expand(batch_size, -1).contiguous()  # (batch, n)
-        upper = upper.unsqueeze(0).expand(batch_size, -1).contiguous()  # (batch, n)
-
         # Select solver based on device
         solver = self.get_torch_solver("cuda" if is_cuda else "cpu")
 
@@ -430,8 +419,6 @@ class MOREAU_ctx:
             A_values=A_values,
             q=q,
             b=b,
-            lower=lower,
-            upper=upper,
             batch_size=batch_size,
             originally_unbatched=originally_unbatched,
             solver=solver,
@@ -490,17 +477,11 @@ class MOREAU_ctx:
         q = q.T  # (batch, n)
         b = b.T  # (batch, m)
 
-        # Broadcast bounds to batch
-        lower = jnp.full((batch_size, self.P_shape[0]), self.lower, dtype=jnp.float64)
-        upper = jnp.full((batch_size, self.P_shape[0]), self.upper, dtype=jnp.float64)
-
         return MOREAU_data_jax(
             P_values=P_values,
             A_values=A_values,
             q=q,
             b=b,
-            lower=lower,
-            upper=upper,
             batch_size=batch_size,
             originally_unbatched=originally_unbatched,
             # Cached solver (created once, reused across calls)
@@ -513,6 +494,8 @@ class MOREAU_ctx:
             P_eval_size=quad_obj_values.shape[0] if quad_obj_values is not None else 0,
             q_eval_size=lin_obj_values.shape[0],
             A_eval_size=con_values.shape[0],
+            # Whether setup() was already called (P/A constant optimization)
+            setup_cached=self.PA_is_constant,
         )
 
 
@@ -520,15 +503,13 @@ class MOREAU_ctx:
 class MOREAU_data:
     """Data class for PyTorch Moreau solver.
 
-    Uses moreau.torch.Solver with three-step API and built-in autograd support.
+    Uses moreau.torch.Solver with two-step API (setup + solve) and built-in autograd support.
     """
 
     P_values: Any  # torch.Tensor (batch, nnzP)
     A_values: Any  # torch.Tensor (batch, nnzA)
     q: Any  # torch.Tensor (batch, n)
     b: Any  # torch.Tensor (batch, m)
-    lower: Any  # torch.Tensor (batch, n) - lower bounds
-    upper: Any  # torch.Tensor (batch, n) - upper bounds
     batch_size: int
     originally_unbatched: bool
     solver: Any  # moreau.torch.Solver (CPU or CUDA)
@@ -577,7 +558,7 @@ class MOREAU_data:
             A_values = self.A_values.requires_grad_(True)
             self.solver.setup(P_values, A_values)
 
-        solution = self.solver.solve(q, b, self.lower, self.upper)
+        solution = self.solver.solve(q, b)
 
         # Extract primal and dual - keep connected to autograd graph (don't detach!)
         primal = solution.x  # (batch, n)
@@ -684,8 +665,6 @@ class MOREAU_data_jax:
     A_values: Any  # jnp.ndarray (batch, nnzA)
     q: Any  # jnp.ndarray (batch, n)
     b: Any  # jnp.ndarray (batch, m)
-    lower: Any  # jnp.ndarray (batch, n) - lower bounds
-    upper: Any  # jnp.ndarray (batch, n) - upper bounds
     batch_size: int
     originally_unbatched: bool
 
@@ -702,15 +681,20 @@ class MOREAU_data_jax:
     q_eval_size: int
     A_eval_size: int
 
+    # Whether setup() was already called in _create_jax_solver (P/A constant case)
+    setup_cached: bool = False
+
     def jax_solve(self, solver_args=None):
         """Solve using moreau.jax.Solver with native custom_vjp gradients."""
         if jnp is None:
             raise ImportError("JAX interface requires 'jax' package. Install with: pip install jax")
 
-        # Solve using cached solver - moreau.jax.Solver returns JaxSolution with x, z, s, etc.
-        solution = self.solver.solve(
-            self.P_values, self.A_values, self.q, self.b, self.lower, self.upper
-        )
+        # Setup if P/A are NOT constant (otherwise was done at solver creation)
+        if not self.setup_cached:
+            self.solver.setup(self.P_values, self.A_values)
+
+        # Solve with q and b only
+        solution = self.solver.solve(self.q, self.b)
 
         primal = solution.x  # (batch, n)
         dual = solution.z  # (batch, m)
@@ -722,8 +706,6 @@ class MOREAU_data_jax:
             "A_values": self.A_values,
             "q": self.q,
             "b": self.b,
-            "lower": self.lower,
-            "upper": self.upper,
         }
 
         return primal, dual, backwards_info
@@ -744,9 +726,7 @@ class MOREAU_data_jax:
         # Define loss function that extracts x and z from solution
         def solve_fn(P_vals, A_vals, q, b):
             solver = backwards_info["solver"]
-            solution = solver.solve(
-                P_vals, A_vals, q, b, backwards_info["lower"], backwards_info["upper"]
-            )
+            solution = solver.solve(P_vals, A_vals, q, b)
             return solution.x, solution.z
 
         # Compute vector-Jacobian products using JAX

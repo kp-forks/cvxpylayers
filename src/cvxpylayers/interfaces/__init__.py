@@ -23,8 +23,6 @@ def get_solver_ctx(
                 param_prob.reduced_P.problem_data_index,
                 param_prob.reduced_A.problem_data_index,
                 cone_dims,
-                data.get("lower_bound"),
-                data.get("upper_bound"),
                 kwargs,
                 reduced_P_mat=param_prob.reduced_P.reduced_mat,
                 reduced_A_mat=param_prob.reduced_A.reduced_mat,
