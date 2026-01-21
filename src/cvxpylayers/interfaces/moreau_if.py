@@ -228,14 +228,9 @@ class MOREAU_ctx:
                 self._P_const_values = np.array([], dtype=np.float64)
             A_csr = reduced_A_mat[:, -1].tocsr()
             self._A_const_values = -A_csr.data[self.A_idx]  # Negated for Ax + s = b form
-            # Extract b values
-            b_raw = A_csr.data[self.b_idx] if self.b_idx.size > 0 else np.array([])
-            self._b_const = np.zeros(self.A_shape[0], dtype=np.float64)
-            self._b_const[self.b_idx] = b_raw
         else:
             self._P_const_values = None
             self._A_const_values = None
-            self._b_const = None
 
     @property
     def cones(self):

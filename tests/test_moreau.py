@@ -412,7 +412,7 @@ def test_jax_interface_forward_pass():
 
 
 @pytest.mark.xfail(
-    reason="Bug in moreau_cuda jax_wrapper.py: TypeError in _solve_fallback_callback for batched"
+    reason="moreau.jax batch handling bug: returns (1, n) instead of (batch, n)"
 )
 def test_jax_interface_batched():
     """Test JAX interface with Moreau solver for batched inputs."""
