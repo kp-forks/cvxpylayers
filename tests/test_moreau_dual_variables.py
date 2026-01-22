@@ -640,10 +640,8 @@ def test_soc_gradcheck_moreau(device):
     torch.autograd.gradcheck(f, (c_t, t_t), atol=1e-4, rtol=1e-3)
 
 
-@pytest.mark.xfail(reason="SOC explicit multi-dual recovery not supported - KeyError in parse_args")
-@pytest.mark.parametrize("device", get_device_params())
-def test_soc_explicit_multi_dual_moreau(device):
-    """Test SOC constraint with multiple dual variables using Moreau."""
+def test_soc_explicit_multi_dual_moreau():
+    """Test that SOC dual variables raise ValueError with Moreau solver."""
     n = 2
     x = cp.Variable(n)
     t = cp.Variable()
@@ -653,39 +651,17 @@ def test_soc_explicit_multi_dual_moreau(device):
     soc_con = cp.SOC(t, x)
     prob = cp.Problem(cp.Minimize(c @ x - t), [soc_con, t <= t_param])
 
-    layer = CvxpyLayer(
-        prob,
-        parameters=[c, t_param],
-        variables=[x, t, soc_con.dual_variables[0], soc_con.dual_variables[1]],
-        solver="MOREAU",
-    )
-
-    c_t = torch.tensor([1.0, 0.5], requires_grad=True, device=device)
-    t_t = torch.tensor(2.0, requires_grad=True, device=device)
-
-    x_opt, t_opt, soc_dual0, soc_dual1 = layer(c_t, t_t)
-
-    c.value = c_t.detach().cpu().numpy()
-    t_param.value = t_t.detach().cpu().numpy().item()
-    prob.solve(solver=cp.CLARABEL)
-
-    np.testing.assert_allclose(x_opt.detach().cpu().numpy(), x.value, rtol=1e-3, atol=1e-4)
-    np.testing.assert_allclose(t_opt.detach().cpu().numpy(), t.value, rtol=1e-3, atol=1e-4)
-    np.testing.assert_allclose(
-        soc_dual0.detach().cpu().numpy(), soc_con.dual_variables[0].value, rtol=1e-3, atol=1e-4
-    )
-    np.testing.assert_allclose(
-        soc_dual1.detach().cpu().numpy().flatten(),
-        soc_con.dual_variables[1].value.flatten(),
-        rtol=1e-3,
-        atol=1e-4,
-    )
+    with pytest.raises(ValueError, match="SOC dual variables are not supported with the Moreau"):
+        CvxpyLayer(
+            prob,
+            parameters=[c, t_param],
+            variables=[x, t, soc_con.dual_variables[0], soc_con.dual_variables[1]],
+            solver="MOREAU",
+        )
 
 
-@pytest.mark.xfail(reason="SOC explicit multi-dual recovery not supported - KeyError in parse_args")
-@pytest.mark.parametrize("device", get_device_params())
-def test_soc_explicit_multi_dual_gradcheck_moreau(device):
-    """Rigorous gradient check for SOC with multiple dual variables using Moreau."""
+def test_soc_explicit_multi_dual_gradcheck_moreau():
+    """Test that SOC dual variables raise ValueError with Moreau (gradcheck version)."""
     n = 2
     x = cp.Variable(n)
     t = cp.Variable()
@@ -695,21 +671,13 @@ def test_soc_explicit_multi_dual_gradcheck_moreau(device):
     soc_con = cp.SOC(t, x)
     prob = cp.Problem(cp.Minimize(c @ x - t + 0.1 * cp.sum_squares(x)), [soc_con, t <= t_param])
 
-    layer = CvxpyLayer(
-        prob,
-        parameters=[c, t_param],
-        variables=[x, t, soc_con.dual_variables[0], soc_con.dual_variables[1]],
-        solver="MOREAU",
-    )
-
-    def f(c_t, t_t):
-        x_opt, t_opt, dual0, dual1 = layer(c_t, t_t)
-        return dual0.sum() + dual1.sum()
-
-    c_t = torch.tensor([0.5, 0.3], requires_grad=True, device=device)
-    t_t = torch.tensor(2.0, requires_grad=True, device=device)
-
-    torch.autograd.gradcheck(f, (c_t, t_t), atol=1e-4, rtol=1e-3)
+    with pytest.raises(ValueError, match="SOC dual variables are not supported with the Moreau"):
+        CvxpyLayer(
+            prob,
+            parameters=[c, t_param],
+            variables=[x, t, soc_con.dual_variables[0], soc_con.dual_variables[1]],
+            solver="MOREAU",
+        )
 
 
 # ============================================================================
