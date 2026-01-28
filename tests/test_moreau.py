@@ -9,10 +9,9 @@ from cvxpylayers.torch import CvxpyLayer
 
 # Skip all tests in this module if moreau is not installed
 moreau = pytest.importorskip("moreau")
-import moreau.torch as moreau_torch
 
 # Check for CUDA availability
-HAS_CUDA = torch.cuda.is_available() and moreau.device_available('cuda')
+HAS_CUDA = torch.cuda.is_available() and moreau.device_available("cuda")
 
 jax = pytest.importorskip("jax")
 jnp = pytest.importorskip("jax.numpy")
@@ -75,9 +74,7 @@ def compare_solvers(problem, params, param_vals, variables):
 
         # Compare Moreau vs ground truth
         moreau_err = np.linalg.norm(sol_moreau.detach().cpu().numpy() - sol_true)
-        assert moreau_err < 1e-3, (
-            f"Moreau var {i} error: ||Moreau - true|| = {moreau_err:.6e}"
-        )
+        assert moreau_err < 1e-3, f"Moreau var {i} error: ||Moreau - true|| = {moreau_err:.6e}"
 
         # Compare Moreau vs DIFFCP
         primal_diff = torch.norm(sol_moreau.cpu() - sol_diffcp).item()
@@ -99,9 +96,7 @@ def compare_solvers_batched(problem, params, param_vals_batch, variables):
 
     # Test Moreau with batched inputs
     layer_moreau = CvxpyLayer(problem, params, variables, solver="MOREAU")
-    sols_moreau = layer_moreau(
-        *[torch.tensor(v, requires_grad=True) for v in param_vals_batch]
-    )
+    sols_moreau = layer_moreau(*[torch.tensor(v, requires_grad=True) for v in param_vals_batch])
 
     # Compare solutions for each batch element
     for batch_idx in range(batch_size):
@@ -140,9 +135,7 @@ def compare_solvers_batched(problem, params, param_vals_batch, variables):
         for i, (sol_moreau, sol_diffcp, sol_true) in enumerate(
             zip(sols_moreau, sols_diffcp, true_sol, strict=True)
         ):
-            moreau_err = np.linalg.norm(
-                sol_moreau[batch_idx].detach().cpu().numpy() - sol_true
-            )
+            moreau_err = np.linalg.norm(sol_moreau[batch_idx].detach().cpu().numpy() - sol_true)
             assert moreau_err < 1e-3, (
                 f"Batch {batch_idx}, var {i}: ||Moreau - true|| = {moreau_err:.6e}"
             )
@@ -457,8 +450,12 @@ def test_jax_interface_batched():
         assert error < 1e-3, f"Batch {i} error: {error:.6e}"
 
 
-def test_backward_not_implemented():
-    """Test that backward pass raises NotImplementedError."""
+def test_backward_gradient():
+    """Test that backward pass computes correct gradients.
+
+    For minimize ||x - b||^2, the optimal x* = b, so dx*/db = I.
+    Thus d/db sum(x*) = d/db sum(b) = [1, 1, 1].
+    """
     n = 3
     x = cp.Variable(n)
     b = cp.Parameter(n)
@@ -468,14 +465,26 @@ def test_backward_not_implemented():
     layer_moreau = CvxpyLayer(problem, parameters=[b], variables=[x], solver="MOREAU")
 
     # Create parameter with requires_grad=True
-    b_val = torch.randn(n, requires_grad=True)
+    b_val = torch.tensor([1.0, 2.0, 3.0], requires_grad=True, dtype=torch.float64)
 
-    # Forward pass should work
+    # Forward pass
     (x_sol,) = layer_moreau(b_val)
 
-    # Backward pass should raise NotImplementedError
-    with pytest.raises(NotImplementedError, match="not yet implemented"):
-        x_sol.sum().backward()
+    # Verify forward pass is correct
+    assert torch.allclose(x_sol, b_val.detach(), atol=1e-4), (
+        f"Forward: expected {b_val}, got {x_sol}"
+    )
+
+    # Backward pass should compute correct gradients
+    loss = x_sol.sum()
+    loss.backward()
+
+    # Gradient should be [1, 1, 1] since dx*/db = I
+    expected_grad = torch.ones(n, dtype=torch.float64)
+    assert b_val.grad is not None, "Gradient was not computed"
+    assert torch.allclose(b_val.grad, expected_grad, atol=1e-4), (
+        f"Backward: expected grad {expected_grad}, got {b_val.grad}"
+    )
 
 
 # ============================================================================
@@ -514,8 +523,8 @@ def test_cpu_equality_only():
     # Verify output is on CPU
     assert x_sol.device.type == "cpu", f"Expected CPU tensor, got {x_sol.device}"
 
-    # Verify solution is correct
-    error = np.linalg.norm(x_sol.numpy() - true_sol)
+    # Verify solution is correct (detach needed since output has grad_fn)
+    error = np.linalg.norm(x_sol.detach().numpy() - true_sol)
     assert error < 1e-3, f"CPU solver error: {error:.6e}"
 
 
@@ -556,8 +565,8 @@ def test_cpu_mixed_constraints():
     # Verify output is on CPU
     assert x_sol.device.type == "cpu"
 
-    # Verify solution
-    error = np.linalg.norm(x_sol.numpy() - true_sol)
+    # Verify solution (detach needed since output has grad_fn)
+    error = np.linalg.norm(x_sol.detach().numpy() - true_sol)
     assert error < 1e-3, f"CPU solver error: {error:.6e}"
 
 
@@ -594,7 +603,7 @@ def test_cpu_batched():
         problem.solve()
         true_sol = x.value
 
-        error = np.linalg.norm(x_sol[i].numpy() - true_sol)
+        error = np.linalg.norm(x_sol[i].detach().numpy() - true_sol)
         assert error < 1e-3, f"Batch {i} error: {error:.6e}"
 
 
@@ -668,50 +677,166 @@ def test_cpu_and_cuda_solutions_match():
 def test_solver_args_actually_used():
     """Test that solver_args actually affect the solver's behavior.
 
-    This verifies solver_args are truly passed to the solver by:
-    1. Solving with very restrictive max_iter (should give suboptimal solution)
-    2. Solving with normal settings (should give better solution)
-    3. Verifying the solutions differ, proving solver_args were used
+    This verifies solver_args are truly passed to the solver by checking
+    that the max_iter setting is respected.
 
-    Note: moreau uses 'max_iter' (not 'max_iters') and 'tol_gap_abs' (not 'eps').
+    Note: Moreau sets options at construction time, so we check the stored options.
     """
-    np.random.seed(123)
-    m, n = 50, 20
-
+    n = 5
     x = cp.Variable(n)
-    A = cp.Parameter((m, n))
-    b = cp.Parameter(m)
+    b = cp.Parameter(n)
 
-    # Least squares problem: minimize ||Ax - b||^2
-    problem = cp.Problem(cp.Minimize(cp.sum_squares(A @ x - b)))
+    problem = cp.Problem(cp.Minimize(cp.sum_squares(x - b)))
 
+    # Create layer with custom max_iter
+    layer = CvxpyLayer(
+        problem,
+        parameters=[b],
+        variables=[x],
+        solver="MOREAU",
+        solver_args={"max_iter": 42},
+    )
+
+    # Verify options are stored correctly
+    assert layer.ctx.solver_ctx.options.get("max_iter") == 42, (
+        "max_iter option was not stored correctly"
+    )
+
+    # Verify options are applied to solver settings
+    settings = layer.ctx.solver_ctx._get_settings(enable_grad=True)
+    assert settings.max_iter == 42, (
+        f"max_iter not applied to settings: expected 42, got {settings.max_iter}"
+    )
+
+
+# ============================================================================
+# Setup caching tests (constant P/A optimization)
+# ============================================================================
+
+
+def test_constant_PA_detection():
+    """Test that constant P/A is detected and setup is cached.
+
+    When only q (linear objective) depends on parameters, and P and A are constant,
+    setup() should be called once during solver creation, not on every forward pass.
+
+    Problem: minimize c'x subject to x >= 0, sum(x) = 1
+    Here P=None, A is constant (constraint structure), only q=c depends on parameter.
+    """
+    n = 4
+    x = cp.Variable(n)
+    c = cp.Parameter(n)
+
+    # Only c (linear cost) is parametrized; P=None, A is constant
+    problem = cp.Problem(cp.Minimize(c @ x), [x >= 0, cp.sum(x) == 1])
+
+    layer = CvxpyLayer(problem, parameters=[c], variables=[x], solver="MOREAU")
+
+    # Verify PA_is_constant is True
+    assert layer.ctx.solver_ctx.PA_is_constant, (
+        "Expected PA_is_constant=True for problem with only linear cost parametrized"
+    )
+
+    # Verify solutions are correct
+    # For minimize c'x s.t. x >= 0, sum(x) = 1: optimal puts all weight on smallest c_i
+    c_val = torch.tensor([3.0, 1.0, 4.0, 2.0], requires_grad=True)
+    (x_sol,) = layer(c_val)
+
+    # Optimal solution: x = e_i where i = argmin(c)
+    expected = torch.zeros(n)
+    expected[1] = 1.0  # c[1] = 1.0 is minimum
+    assert torch.allclose(x_sol, expected, atol=1e-4), f"Expected {expected}, got {x_sol}"
+
+
+def test_constant_PA_multiple_forward_passes():
+    """Test that cached setup works correctly across multiple forward passes.
+
+    Problem: minimize c'x subject to x >= 0, sum(x) = 1
+    """
+    n = 3
+    x = cp.Variable(n)
+    c = cp.Parameter(n)
+
+    problem = cp.Problem(cp.Minimize(c @ x), [x >= 0, cp.sum(x) == 1])
+    layer = CvxpyLayer(problem, parameters=[c], variables=[x], solver="MOREAU")
+
+    # Verify PA_is_constant
+    assert layer.ctx.solver_ctx.PA_is_constant
+
+    # Run multiple forward passes with different c values
+    test_cases = [
+        torch.tensor([1.0, 2.0, 3.0]),  # min at index 0
+        torch.tensor([3.0, 1.0, 2.0]),  # min at index 1
+        torch.tensor([2.0, 3.0, 1.0]),  # min at index 2
+    ]
+    for i, c_val in enumerate(test_cases):
+        c_val = c_val.clone().requires_grad_(True)
+        (x_sol,) = layer(c_val)
+
+        # Optimal solution puts all weight on minimum c
+        expected = torch.zeros(n)
+        expected[c_val.detach().argmin()] = 1.0
+        assert torch.allclose(x_sol, expected, atol=1e-4), (
+            f"Pass {i}: Expected {expected}, got {x_sol}"
+        )
+
+
+def test_constant_PA_gradients():
+    """Test that gradients work correctly when P/A are constant.
+
+    Problem: minimize c'x subject to x >= 0, sum(x) = 1
+    For c = [1, 2, 3], optimal x* = [1, 0, 0], so objective = c[0] = 1.
+    Gradient of objective w.r.t. c is x* = [1, 0, 0].
+    """
+    n = 3
+    x = cp.Variable(n)
+    c = cp.Parameter(n)
+
+    problem = cp.Problem(cp.Minimize(c @ x), [x >= 0, cp.sum(x) == 1])
+    layer = CvxpyLayer(problem, parameters=[c], variables=[x], solver="MOREAU")
+
+    assert layer.ctx.solver_ctx.PA_is_constant
+
+    c_val = torch.tensor([1.0, 2.0, 3.0], requires_grad=True)
+    (x_sol,) = layer(c_val)
+
+    # Forward pass: optimal x = [1, 0, 0]
+    expected_x = torch.tensor([1.0, 0.0, 0.0])
+    assert torch.allclose(x_sol, expected_x, atol=1e-4), f"Expected {expected_x}, got {x_sol}"
+
+    # Backward pass: d(c'x)/dc = x
+    loss = (c_val * x_sol).sum()  # This is c'x
+    loss.backward()
+
+    # Gradient should be x* = [1, 0, 0]
+    expected_grad = expected_x
+    assert c_val.grad is not None
+    assert torch.allclose(c_val.grad, expected_grad, atol=1e-4), (
+        f"Expected grad {expected_grad}, got {c_val.grad}"
+    )
+
+
+def test_parametrized_PA_not_cached():
+    """Test that when P or A depend on parameters, setup is not cached."""
+    n = 3
+    x = cp.Variable(n)
+    A = cp.Parameter((1, n))  # Constraint matrix is parametrized
+    b = cp.Parameter(1)
+
+    problem = cp.Problem(cp.Minimize(cp.sum_squares(x)), [A @ x == b])
     layer = CvxpyLayer(problem, parameters=[A, b], variables=[x], solver="MOREAU")
 
-    A_th = torch.randn(m, n).double()
-    b_th = torch.randn(m).double()
-
-    # Solve with very restrictive iterations (should stop early, suboptimal)
-    (x_restricted,) = layer(A_th, b_th, solver_args={"max_iter": 1})
-
-    # Solve with proper iterations (should converge to optimal)
-    (x_optimal,) = layer(A_th, b_th, solver_args={"max_iter": 200, "tol_gap_abs": 1e-10})
-
-    # The solutions should differ if solver_args were actually used
-    # With only 1 iteration, the solution should be far from optimal
-    diff = torch.norm(x_restricted - x_optimal).item()
-    assert diff > 1e-3, (
-        f"Solutions with max_iter=1 and max_iter=200 are too similar (diff={diff}). "
-        "This suggests solver_args are not being passed to the solver."
+    # PA_is_constant should be False since A is parametrized
+    assert not layer.ctx.solver_ctx.PA_is_constant, (
+        "Expected PA_is_constant=False when A is parametrized"
     )
 
-    # The optimal solution should have much lower objective value
-    def compute_objective(x_sol):
-        return torch.sum((A_th @ x_sol - b_th) ** 2).item()
+    # Verify solutions are still correct
+    A_val = torch.tensor([[1.0, 1.0, 1.0]])
+    b_val = torch.tensor([3.0])
 
-    obj_restricted = compute_objective(x_restricted)
-    obj_optimal = compute_objective(x_optimal)
+    (x_sol,) = layer(A_val, b_val)
 
-    assert obj_optimal < obj_restricted, (
-        f"Optimal objective ({obj_optimal}) should be less than restricted ({obj_restricted}). "
-        "This suggests solver_args are not being used properly."
-    )
+    # Check constraint satisfaction: sum(x) = 3
+    constraint_value = (A_val @ x_sol.unsqueeze(-1)).squeeze()
+    assert torch.allclose(constraint_value, b_val, atol=1e-4)

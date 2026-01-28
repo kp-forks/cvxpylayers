@@ -18,7 +18,15 @@ def get_solver_ctx(
         case "MOREAU":
             from cvxpylayers.interfaces.moreau_if import MOREAU_ctx
 
-            ctx_cls = MOREAU_ctx
+            # MOREAU needs actual matrices to detect if P/A are constant
+            return MOREAU_ctx(
+                param_prob.reduced_P.problem_data_index,
+                param_prob.reduced_A.problem_data_index,
+                cone_dims,
+                kwargs,
+                reduced_P_mat=param_prob.reduced_P.reduced_mat,
+                reduced_A_mat=param_prob.reduced_A.reduced_mat,
+            )
         case "DIFFCP":
             from cvxpylayers.interfaces.diffcp_if import DIFFCP_ctx
 
