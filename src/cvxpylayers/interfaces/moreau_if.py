@@ -752,9 +752,10 @@ class MOREAU_data_jax:
         q_vjp = backwards_info["q"]
         b_vjp = backwards_info["b"]
 
-        if self.batch_size > 1:
+        if not self.originally_unbatched:
+            # Use vmap for any batched input (including batch_size=1)
             solve_fn = jax.vmap(solve_fn)
-        elif self.originally_unbatched:
+        else:
             # Squeeze batch dim so VJP inputs/outputs are consistently unbatched
             P_vjp = jnp.squeeze(P_vjp, 0)
             A_vjp = jnp.squeeze(A_vjp, 0)

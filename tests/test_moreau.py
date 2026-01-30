@@ -488,6 +488,48 @@ def test_torch_l1_norm_gradient():
     assert torch.isfinite(b_val.grad).all(), f"gradb contains non-finite values"
 
 
+def test_jax_batch_size_one_gradient():
+    """Test JAX gradient with explicitly batched batch_size=1 input.
+
+    This tests a regression where batch_size=1 with explicitly batched
+    input (shape (1, n)) wasn't handled correctly in the backward pass.
+    The VJP expected unbatched shapes but received batched shapes.
+    """
+    from cvxpylayers.jax import CvxpyLayer as JaxCvxpyLayer
+
+    n, m = 3, 4
+    x = cp.Variable(n)
+    A = cp.Parameter((m, n))
+    b = cp.Parameter(m)
+
+    # L1 norm introduces auxiliary constraints, making A_shape[0] > b_idx.size
+    objective = cp.Minimize(cp.norm(A @ x - b, 1) + 0.1 * cp.sum_squares(x))
+    problem = cp.Problem(objective)
+
+    layer = JaxCvxpyLayer(problem, parameters=[A, b], variables=[x], solver="MOREAU")
+
+    np.random.seed(42)
+    # Explicitly batched with batch_size=1
+    A_val = jnp.array(np.random.randn(1, m, n))
+    b_val = jnp.array(np.random.randn(1, m))
+
+    # Forward pass
+    (solution,) = layer(A_val, b_val)
+    assert solution.shape == (1, n), f"Expected shape (1, {n}), got {solution.shape}"
+
+    # Backward pass - this was failing before the fix
+    def loss_fn(A, b):
+        (x,) = layer(A, b)
+        return x.sum()
+
+    gradA, gradb = jax.grad(loss_fn, argnums=(0, 1))(A_val, b_val)
+
+    assert gradA.shape == (1, m, n), f"Expected gradA shape (1, {m}, {n}), got {gradA.shape}"
+    assert gradb.shape == (1, m), f"Expected gradb shape (1, {m}), got {gradb.shape}"
+    assert jnp.isfinite(gradA).all(), "gradA contains non-finite values"
+    assert jnp.isfinite(gradb).all(), "gradb contains non-finite values"
+
+
 def test_jax_interface_batched():
     """Test JAX interface with Moreau solver for batched inputs."""
     from cvxpylayers.jax import CvxpyLayer as JaxCvxpyLayer
