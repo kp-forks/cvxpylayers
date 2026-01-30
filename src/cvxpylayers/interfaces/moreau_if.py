@@ -552,11 +552,22 @@ class MOREAU_data:
         gradient computation. We store it internally rather than returning it
         because returning it as an output would cause PyTorch to update the
         grad_fn of the tensors inside, breaking the autograd chain.
+
+        Args:
+            solver_args: Optional dict of solver settings to override for this call.
+                Supports 'verbose', 'max_iter', 'time_limit', and other moreau.Settings fields.
         """
         if torch is None:
             raise ImportError(
                 "PyTorch interface requires 'torch' package. Install with: pip install torch"
             )
+
+        # Apply per-call solver_args by updating the solver's internal settings
+        if solver_args:
+            settings = self.solver._impl._settings
+            for key, value in solver_args.items():
+                if hasattr(settings, key):
+                    setattr(settings, key, value)
 
         # Enable gradients on inputs for Moreau's autograd
         q = self.q.requires_grad_(True)
@@ -657,10 +668,8 @@ class MOREAU_data:
         if db_raw is not None:
             # b gradients go to the last portion of A_eval
             b_start = self.A_eval_size - self.b_idx_tensor.shape[0]
-            b_section = torch.zeros(
-                (self.b_idx_tensor.shape[0], self.batch_size), dtype=dtype, device=device
-            )
-            b_section[self.b_idx_tensor, :] = db_raw.T
+            # Gather gradients from positions b_idx (backward of scatter)
+            b_section = db_raw[:, self.b_idx_tensor].T  # (b_idx.size, batch)
             dA_eval[b_start:, :] = b_section
 
         # Remove batch dimension if originally unbatched
@@ -701,9 +710,21 @@ class MOREAU_data_jax:
     setup_cached: bool = False
 
     def jax_solve(self, solver_args=None):
-        """Solve using moreau.jax.Solver with native custom_vjp gradients."""
+        """Solve using moreau.jax.Solver with native custom_vjp gradients.
+
+        Args:
+            solver_args: Optional dict of solver settings to override for this call.
+                Supports 'verbose', 'max_iter', 'time_limit', and other moreau.Settings fields.
+        """
         if jnp is None:
             raise ImportError("JAX interface requires 'jax' package. Install with: pip install jax")
+
+        # Apply per-call solver_args by updating the solver's internal settings
+        if solver_args:
+            settings = self.solver._settings
+            for key, value in solver_args.items():
+                if hasattr(settings, key):
+                    setattr(settings, key, value)
 
         # Always use 4-arg solve for JAX
         if self.batch_size > 1:
@@ -754,9 +775,10 @@ class MOREAU_data_jax:
         q_vjp = backwards_info["q"]
         b_vjp = backwards_info["b"]
 
-        if self.batch_size > 1:
+        if not self.originally_unbatched:
+            # Use vmap for any batched input (including batch_size=1)
             solve_fn = jax.vmap(solve_fn)
-        elif self.originally_unbatched:
+        else:
             # Squeeze batch dim so VJP inputs/outputs are consistently unbatched
             P_vjp = jnp.squeeze(P_vjp, 0)
             A_vjp = jnp.squeeze(A_vjp, 0)
@@ -792,8 +814,8 @@ class MOREAU_data_jax:
         dA_eval = dA_eval.at[self.A_idx, :].set(-dA_values.T)  # Negate back
 
         b_start = self.A_eval_size - self.b_idx.size
-        b_section = jnp.zeros((self.b_idx.size, self.batch_size), dtype=jnp.float64)
-        b_section = b_section.at[self.b_idx, :].set(db_raw.T)
+        # Gather gradients from positions b_idx (backward of scatter)
+        b_section = db_raw[:, self.b_idx].T  # (b_idx.size, batch)
         dA_eval = dA_eval.at[b_start:, :].set(b_section)
 
         # Remove batch dimension if originally unbatched

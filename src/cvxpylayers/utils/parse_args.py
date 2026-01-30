@@ -417,6 +417,7 @@ def parse_args(
         cone_dims,
         data,
         solver_args,
+        verbose=verbose,
     )
 
     # Build parameter ordering mapping
