@@ -411,6 +411,83 @@ def test_jax_interface_forward_pass():
     assert obj_error < 1e-3, f"Objective error: |JAX-Moreau - CVXPY| = {obj_error:.6e}"
 
 
+def test_jax_l1_norm_gradient():
+    """Test JAX gradient for L1 norm objective (introduces auxiliary constraints).
+
+    L1 norm problems have auxiliary variables/constraints during canonicalization,
+    so A_shape[0] > b_idx.size. This tests that the backward pass correctly
+    gathers gradients from the expanded constraint space.
+    """
+    from cvxpylayers.jax import CvxpyLayer as JaxCvxpyLayer
+
+    n, m = 2, 3
+    x = cp.Variable(n)
+    A = cp.Parameter((m, n))
+    b = cp.Parameter(m)
+    constraints = [x >= 0]
+    objective = cp.Minimize(0.5 * cp.pnorm(A @ x - b, p=1))
+    problem = cp.Problem(objective, constraints)
+    assert problem.is_dpp()
+
+    layer = JaxCvxpyLayer(problem, parameters=[A, b], variables=[x], solver="MOREAU")
+
+    key = jax.random.PRNGKey(0)
+    key, k1, k2 = jax.random.split(key, 3)
+    A_jax = jax.random.normal(k1, shape=(m, n))
+    b_jax = jax.random.normal(k2, shape=(m,))
+
+    # Forward pass
+    (solution,) = layer(A_jax, b_jax)
+    assert solution.shape == (n,), f"Expected shape ({n},), got {solution.shape}"
+
+    # Backward pass - this was failing before the fix
+    dlayer = jax.grad(lambda A, b: sum(layer(A, b)[0]), argnums=[0, 1])
+    gradA, gradb = dlayer(A_jax, b_jax)
+
+    assert gradA.shape == (m, n), f"Expected gradA shape ({m}, {n}), got {gradA.shape}"
+    assert gradb.shape == (m,), f"Expected gradb shape ({m},), got {gradb.shape}"
+    assert jnp.isfinite(gradA).all(), f"gradA contains non-finite values: {gradA}"
+    assert jnp.isfinite(gradb).all(), f"gradb contains non-finite values: {gradb}"
+
+
+def test_torch_l1_norm_gradient():
+    """Test PyTorch gradient for L1 norm objective (introduces auxiliary constraints).
+
+    L1 norm problems have auxiliary variables/constraints during canonicalization,
+    so A_shape[0] > b_idx.size. This tests that the backward pass correctly
+    gathers gradients from the expanded constraint space.
+    """
+    n, m = 2, 3
+    x = cp.Variable(n)
+    A = cp.Parameter((m, n))
+    b = cp.Parameter(m)
+    constraints = [x >= 0]
+    objective = cp.Minimize(0.5 * cp.pnorm(A @ x - b, p=1))
+    problem = cp.Problem(objective, constraints)
+    assert problem.is_dpp()
+
+    layer = CvxpyLayer(problem, parameters=[A, b], variables=[x], solver="MOREAU")
+
+    np.random.seed(42)
+    A_val = torch.tensor(np.random.randn(m, n), requires_grad=True, dtype=torch.float64)
+    b_val = torch.tensor(np.random.randn(m), requires_grad=True, dtype=torch.float64)
+
+    # Forward pass
+    (solution,) = layer(A_val, b_val)
+    assert solution.shape == (n,), f"Expected shape ({n},), got {solution.shape}"
+
+    # Backward pass
+    loss = solution.sum()
+    loss.backward()
+
+    assert A_val.grad is not None, "gradA was not computed"
+    assert b_val.grad is not None, "gradb was not computed"
+    assert A_val.grad.shape == (m, n), f"Expected gradA shape ({m}, {n}), got {A_val.grad.shape}"
+    assert b_val.grad.shape == (m,), f"Expected gradb shape ({m},), got {b_val.grad.shape}"
+    assert torch.isfinite(A_val.grad).all(), f"gradA contains non-finite values"
+    assert torch.isfinite(b_val.grad).all(), f"gradb contains non-finite values"
+
+
 def test_jax_interface_batched():
     """Test JAX interface with Moreau solver for batched inputs."""
     from cvxpylayers.jax import CvxpyLayer as JaxCvxpyLayer

@@ -657,10 +657,8 @@ class MOREAU_data:
         if db_raw is not None:
             # b gradients go to the last portion of A_eval
             b_start = self.A_eval_size - self.b_idx_tensor.shape[0]
-            b_section = torch.zeros(
-                (self.b_idx_tensor.shape[0], self.batch_size), dtype=dtype, device=device
-            )
-            b_section[self.b_idx_tensor, :] = db_raw.T
+            # Gather gradients from positions b_idx (backward of scatter)
+            b_section = db_raw[:, self.b_idx_tensor].T  # (b_idx.size, batch)
             dA_eval[b_start:, :] = b_section
 
         # Remove batch dimension if originally unbatched
@@ -792,8 +790,8 @@ class MOREAU_data_jax:
         dA_eval = dA_eval.at[self.A_idx, :].set(-dA_values.T)  # Negate back
 
         b_start = self.A_eval_size - self.b_idx.size
-        b_section = jnp.zeros((self.b_idx.size, self.batch_size), dtype=jnp.float64)
-        b_section = b_section.at[self.b_idx, :].set(db_raw.T)
+        # Gather gradients from positions b_idx (backward of scatter)
+        b_section = db_raw[:, self.b_idx].T  # (b_idx.size, batch)
         dA_eval = dA_eval.at[b_start:, :].set(b_section)
 
         # Remove batch dimension if originally unbatched
