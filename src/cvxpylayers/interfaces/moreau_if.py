@@ -554,20 +554,12 @@ class MOREAU_data:
         grad_fn of the tensors inside, breaking the autograd chain.
 
         Args:
-            solver_args: Optional dict of solver settings to override for this call.
-                Supports 'verbose', 'max_iter', 'time_limit', and other moreau.Settings fields.
+            solver_args: Unused (solver settings are fixed at layer creation time).
         """
         if torch is None:
             raise ImportError(
                 "PyTorch interface requires 'torch' package. Install with: pip install torch"
             )
-
-        # Apply per-call solver_args by updating the solver's internal settings
-        if solver_args:
-            settings = self.solver._impl._settings
-            for key, value in solver_args.items():
-                if hasattr(settings, key):
-                    setattr(settings, key, value)
 
         # Enable gradients on inputs for Moreau's autograd
         q = self.q.requires_grad_(True)
