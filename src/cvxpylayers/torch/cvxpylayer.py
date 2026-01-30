@@ -1,3 +1,4 @@
+import warnings
 from typing import Any, cast
 
 import cvxpy as cp
@@ -426,7 +427,6 @@ def scipy_csr_to_torch_csr(
     num_rows, num_cols = scipy_csr.shape  # type: ignore[misc]
 
     # Create the torch sparse csr_tensor
-    import warnings
     with warnings.catch_warnings():
         warnings.filterwarnings(
             "ignore",
