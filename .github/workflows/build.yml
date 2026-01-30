@@ -39,5 +39,3 @@ jobs:
         with:
           password: ${{ secrets.PYPI_API_TOKEN }}
           attestations: false
-    permissions:
-      id-token: write
