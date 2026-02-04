@@ -178,7 +178,7 @@ class MOREAU_ctx:
 
         Args:
             objective_structure: CSC structure for the P matrix (or None for LP).
-            constraint_structure: CSC structure for the A matrix and b vector.
+            constraint_structure: CSC structure for the A matrix and b vector (or None for unconstrained).
             dims: Cone dimensions dictionary.
             options: Solver options forwarded to ``moreau.Settings``.
             reduced_P_mat: Sparse parametrization matrix for P. When
@@ -187,12 +187,15 @@ class MOREAU_ctx:
                 ``setup()`` call (the ``PA_is_constant`` optimisation).
             reduced_A_mat: Sparse parametrization matrix for A.
         """
-        # Convert constraint matrix from CSC to CSR
-        A_shuffle, A_structure, A_shape, b_idx = convert_csc_structure_to_csr_structure(
-            constraint_structure, True
-        )
+        # Step 1: Determine n (problem dimension) from whichever structure is available
+        if objective_structure is not None:
+            n = objective_structure[2][0]  # P is square, so shape[0] == n
+        elif constraint_structure is not None:
+            n = constraint_structure[2][1] - 1  # A has n+1 columns (last is b)
+        else:
+            raise ValueError("Cannot determine problem dimension: both P and A are None")
 
-        # Convert objective matrix from CSC to CSR
+        # Step 2: Convert P to CSR (or create empty for LP)
         if objective_structure is not None:
             P_shuffle, P_structure, P_shape = convert_csc_structure_to_csr_structure(
                 objective_structure, False
@@ -201,8 +204,19 @@ class MOREAU_ctx:
                 raise ValueError(f"P matrix must be square, got shape {P_shape}")
         else:
             P_shuffle = None
-            P_structure = (np.array([], dtype=np.int64), np.zeros(A_shape[1] + 1, dtype=np.int64))
-            P_shape = (A_shape[1], A_shape[1])
+            P_structure = (np.array([], dtype=np.int64), np.zeros(n + 1, dtype=np.int64))
+            P_shape = (n, n)
+
+        # Step 3: Convert A to CSR (or create empty for unconstrained)
+        if constraint_structure is not None:
+            A_shuffle, A_structure, A_shape, b_idx = convert_csc_structure_to_csr_structure(
+                constraint_structure, True
+            )
+        else:
+            A_shuffle = np.array([], dtype=np.int64)
+            A_structure = (np.array([], dtype=np.int64), np.zeros(1, dtype=np.int64))
+            A_shape = (0, n)
+            b_idx = np.array([], dtype=np.int64)
 
         if P_shape[0] != A_shape[1]:
             raise ValueError(f"P dimension {P_shape[0]} != A column dimension {A_shape[1]}")
@@ -452,68 +466,6 @@ class MOREAU_ctx:
             setup_cached=self.PA_is_constant,
         )
 
-    def jax_to_data(self, quad_obj_values, lin_obj_values, con_values) -> "MOREAU_data_jax":
-        """Prepare data for JAX solve using moreau.jax.Solver."""
-        if jnp is None:
-            raise ImportError("JAX interface requires 'jax' package. Install with: pip install jax")
-
-        batch_size, originally_unbatched = _detect_batch_size(con_values)
-
-        # Add batch dimension for uniform handling
-        if originally_unbatched:
-            con_values = jnp.expand_dims(con_values, 1)
-            lin_obj_values = jnp.expand_dims(lin_obj_values, 1)
-            quad_obj_values = (
-                jnp.expand_dims(quad_obj_values, 1) if quad_obj_values is not None else None
-            )
-
-        # Extract P values in CSR order
-        if self.P_idx is not None and quad_obj_values is not None:
-            P_values = quad_obj_values[self.P_idx, :]  # (nnzP, batch)
-        else:
-            P_values = jnp.zeros((0, batch_size), dtype=jnp.float64)
-
-        # Extract A values in CSR order
-        A_values = -con_values[self.A_idx, :]  # (nnzA, batch), negated for Ax + s = b form
-
-        # Extract b vector
-        b_start = con_values.shape[0] - self.b_idx.size
-        b_raw = con_values[b_start:, :]  # (m, batch)
-        # Create full b and scatter at correct indices
-        b = jnp.zeros((self.A_shape[0], batch_size), dtype=jnp.float64)
-        b = b.at[self.b_idx, :].set(b_raw)
-
-        # Extract q (linear cost)
-        q = lin_obj_values[:-1, :]  # (n, batch)
-
-        # Transpose to (batch, dim) format
-        P_values = P_values.T  # (batch, nnzP)
-        A_values = A_values.T  # (batch, nnzA)
-        q = q.T  # (batch, n)
-        b = b.T  # (batch, m)
-
-        return MOREAU_data_jax(
-            P_values=P_values,
-            A_values=A_values,
-            q=q,
-            b=b,
-            batch_size=batch_size,
-            originally_unbatched=originally_unbatched,
-            # Cached solver (created once, reused across calls)
-            solver=self.get_jax_solver(),
-            # Indices for gradient mapping
-            P_idx=self.P_idx,
-            A_idx=self.A_idx,
-            b_idx=self.b_idx,
-            # Sizes for gradient scatter
-            P_eval_size=quad_obj_values.shape[0] if quad_obj_values is not None else 0,
-            q_eval_size=lin_obj_values.shape[0],
-            A_eval_size=con_values.shape[0],
-            # Always use 4-arg solve for JAX (no setup caching)
-            setup_cached=False,
-        )
-
-
 @dataclass
 class MOREAU_data:
     """Data class for PyTorch Moreau solver.
@@ -678,151 +630,5 @@ class MOREAU_data:
                 dP_eval = dP_eval.squeeze(1)
             dq_eval = dq_eval.squeeze(1)
             dA_eval = dA_eval.squeeze(1)
-
-        return dP_eval, dq_eval, dA_eval
-
-
-@dataclass
-class MOREAU_data_jax:
-    """Data class for JAX Moreau solver using moreau.jax.Solver."""
-
-    P_values: Any  # jnp.ndarray (batch, nnzP)
-    A_values: Any  # jnp.ndarray (batch, nnzA)
-    q: Any  # jnp.ndarray (batch, n)
-    b: Any  # jnp.ndarray (batch, m)
-    batch_size: int
-    originally_unbatched: bool
-
-    # Cached solver (created once, reused across calls)
-    solver: Any  # moreau.jax.Solver
-
-    # Indices for gradient mapping
-    P_idx: np.ndarray | None
-    A_idx: np.ndarray
-    b_idx: np.ndarray
-
-    # Sizes for gradient scatter
-    P_eval_size: int
-    q_eval_size: int
-    A_eval_size: int
-
-    # Whether setup() was already called in _create_jax_solver (P/A constant case)
-    setup_cached: bool = False
-
-    def jax_solve(self, solver_args=None):
-        """Solve using moreau.jax.Solver with native custom_vjp gradients.
-
-        Args:
-            solver_args: Optional dict of solver settings to override for this call.
-                Supports 'verbose', 'max_iter', 'time_limit', and other moreau.Settings fields.
-        """
-        if jnp is None:
-            raise ImportError("JAX interface requires 'jax' package. Install with: pip install jax")
-
-        # Apply per-call solver_args by updating the solver's internal settings
-        if solver_args:
-            settings = self.solver._settings
-            for key, value in solver_args.items():
-                if hasattr(settings, key):
-                    setattr(settings, key, value)
-
-        # Always use 4-arg solve for JAX
-        if self.batch_size > 1:
-            # Moreau JAX solvers expect unbatched inputs; use vmap for batching
-            solution = jax.vmap(self.solver.solve)(
-                self.P_values, self.A_values, self.q, self.b
-            )
-        else:
-            solution = self.solver.solve(
-                self.P_values, self.A_values, self.q, self.b
-            )
-
-        primal = solution.x
-        dual = solution.z
-
-        # Ensure consistent (batch, dim) shape
-        if primal.ndim == 1:
-            primal = jnp.expand_dims(primal, 0)
-            dual = jnp.expand_dims(dual, 0)
-
-        # Store info needed for gradient mapping
-        backwards_info = {
-            "solver": self.solver,
-            "P_values": self.P_values,
-            "A_values": self.A_values,
-            "q": self.q,
-            "b": self.b,
-        }
-
-        return primal, dual, backwards_info
-
-    def jax_derivative(self, dprimal, ddual, backwards_info):
-        """Compute gradients using JAX autodiff on Moreau's solve.
-
-        Maps Moreau's gradients back to cvxpylayers format.
-        """
-        if jnp is None:
-            raise ImportError("JAX interface requires 'jax' package. Install with: pip install jax")
-
-        # Define loss function that extracts x and z from solution
-        def solve_fn(P_vals, A_vals, q, b):
-            solver = backwards_info["solver"]
-            solution = solver.solve(P_vals, A_vals, q, b)
-            return solution.x, solution.z
-
-        P_vjp = backwards_info["P_values"]
-        A_vjp = backwards_info["A_values"]
-        q_vjp = backwards_info["q"]
-        b_vjp = backwards_info["b"]
-
-        if not self.originally_unbatched:
-            # Use vmap for any batched input (including batch_size=1)
-            solve_fn = jax.vmap(solve_fn)
-        else:
-            # Squeeze batch dim so VJP inputs/outputs are consistently unbatched
-            P_vjp = jnp.squeeze(P_vjp, 0)
-            A_vjp = jnp.squeeze(A_vjp, 0)
-            q_vjp = jnp.squeeze(q_vjp, 0)
-            b_vjp = jnp.squeeze(b_vjp, 0)
-            dprimal = jnp.squeeze(dprimal, 0)
-            ddual = jnp.squeeze(ddual, 0)
-
-        # Compute vector-Jacobian products using JAX
-        _, vjp_fn = jax.vjp(solve_fn, P_vjp, A_vjp, q_vjp, b_vjp)
-        dP_values, dA_values, dq_raw, db_raw = vjp_fn((dprimal, ddual))
-
-        # Re-add batch dim for unbatched case
-        if self.originally_unbatched:
-            dP_values = jnp.expand_dims(dP_values, 0)
-            dA_values = jnp.expand_dims(dA_values, 0)
-            dq_raw = jnp.expand_dims(dq_raw, 0)
-            db_raw = jnp.expand_dims(db_raw, 0)
-
-        # Scatter P gradients back to P_eval format
-        if self.P_eval_size > 0 and self.P_idx is not None:
-            dP_eval = jnp.zeros((self.P_eval_size, self.batch_size), dtype=jnp.float64)
-            dP_eval = dP_eval.at[self.P_idx, :].set(dP_values.T)
-        else:
-            dP_eval = None
-
-        # Scatter q gradients to q_eval format
-        dq_eval = jnp.zeros((self.q_eval_size, self.batch_size), dtype=jnp.float64)
-        dq_eval = dq_eval.at[:-1, :].set(dq_raw.T)
-
-        # Scatter A and b gradients to A_eval format
-        dA_eval = jnp.zeros((self.A_eval_size, self.batch_size), dtype=jnp.float64)
-        dA_eval = dA_eval.at[self.A_idx, :].set(-dA_values.T)  # Negate back
-
-        b_start = self.A_eval_size - self.b_idx.size
-        # Gather gradients from positions b_idx (backward of scatter)
-        b_section = db_raw[:, self.b_idx].T  # (b_idx.size, batch)
-        dA_eval = dA_eval.at[b_start:, :].set(b_section)
-
-        # Remove batch dimension if originally unbatched
-        if self.originally_unbatched:
-            if dP_eval is not None:
-                dP_eval = jnp.squeeze(dP_eval, 1)
-            dq_eval = jnp.squeeze(dq_eval, 1)
-            dA_eval = jnp.squeeze(dA_eval, 1)
 
         return dP_eval, dq_eval, dA_eval

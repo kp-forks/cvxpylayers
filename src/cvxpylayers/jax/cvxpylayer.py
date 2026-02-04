@@ -39,18 +39,14 @@ def _apply_gp_log_transform(
     Returns:
         Tuple of transformed parameters (log-space for GP params, unchanged otherwise)
     """
-    if not ctx.gp or not ctx.gp_param_to_log_param:
+    if not ctx.gp or ctx.gp_log_mask is None:
         return params
 
-    params_transformed = []
-    for i, param in enumerate(params):
-        cvxpy_param = ctx.parameters[i]
-        if cvxpy_param in ctx.gp_param_to_log_param:
-            # This parameter needs log transformation for GP
-            params_transformed.append(jnp.log(param))
-        else:
-            params_transformed.append(param)
-    return tuple(params_transformed)
+    # Use pre-computed mask for JIT compatibility (no dict lookups)
+    return tuple(
+        jnp.log(p) if needs_log else p
+        for p, needs_log in zip(params, ctx.gp_log_mask)
+    )
 
 
 def _flatten_and_batch_params(
@@ -196,33 +192,32 @@ def _recover_results(
         Tuple of recovered variable values
     """
     results = []
+    batch_shape = tuple(primal.shape[:-1])
+
     for var in ctx.var_recover:
-        batch_shape = tuple(primal.shape[:-1])
-        if var.primal is not None:
+        # Use pre-computed source field to select data (JIT-compatible)
+        if var.source == "primal":
             data = primal[..., var.primal]
-            if var.is_symmetric:
-                # Unpack symmetric primal variable from vectorized form
-                results.append(_unpack_primal_svec(data, var.shape[0], batch_shape))
-            else:
-                results.append(_reshape_fortran(data, batch_shape + var.shape))
-        elif var.dual is not None:
+        else:  # var.source == "dual"
             data = dual[..., var.dual]
-            if var.is_psd_dual:
-                # Unpack PSD constraint dual from scaled vectorized form
-                results.append(_unpack_svec(data, var.shape[0], batch_shape))
-            else:
-                results.append(_reshape_fortran(data, batch_shape + var.shape))
+
+        # Use pre-computed unpack_fn field (JIT-compatible)
+        if var.unpack_fn == "svec_primal":
+            results.append(_unpack_primal_svec(data, var.shape[0], batch_shape))
+        elif var.unpack_fn == "svec_dual":
+            results.append(_unpack_svec(data, var.shape[0], batch_shape))
+        elif var.unpack_fn == "reshape":
+            results.append(_reshape_fortran(data, batch_shape + var.shape))
         else:
-            raise RuntimeError(
-                "Invalid VariableRecovery: both primal and dual slices are None. "
-                "At least one must be set to recover variable values."
-            )
+            raise ValueError(f"Unknown variable recovery type: {var.unpack_fn}")
 
     # Apply exp transformation to recover primal variables from log-space for GP
     # (dual variables stay in original space - no transformation needed)
+    # Uses pre-computed source field (JIT-compatible)
     if ctx.gp:
         results = [
-            jnp.exp(r) if var.primal is not None else r for r, var in zip(results, ctx.var_recover)
+            jnp.exp(r) if var.source == "primal" else r
+            for r, var in zip(results, ctx.var_recover)
         ]
 
     # Squeeze batch dimension for unbatched inputs
@@ -238,6 +233,15 @@ class CvxpyLayer:
     This layer wraps a parametrized CVXPY problem, solving it in the forward pass
     and computing gradients via implicit differentiation. Compatible with
     ``jax.grad``, ``jax.jit``, and ``jax.vmap``.
+
+    JIT/vmap Compatibility:
+        When using solver="MOREAU", this layer is fully compatible with
+        jax.jit, jax.vmap, and jax.pmap. The Moreau solver provides native
+        JAX autodiff support via custom_vjp with pure_callback, enabling
+        JIT compilation of the entire solve-differentiate pipeline.
+
+        Other solvers (DIFFCP) use Python-based solving and are not
+        JIT-compatible due to closure-based gradient handling.
 
     Example:
         >>> import cvxpy as cp
@@ -319,6 +323,11 @@ class CvxpyLayer:
         self.q: jax.experimental.sparse.BCSR = scipy_csr_to_jax_bcsr(self.ctx.q.tocsr())  # type: ignore[assignment]
         self.A: jax.experimental.sparse.BCSR = scipy_csr_to_jax_bcsr(self.ctx.reduced_A.reduced_mat)  # type: ignore[attr-defined,assignment]
 
+        # Cache the Moreau solve function for JIT compatibility.
+        # Must be captured as closure, not looked up dynamically during tracing.
+        if self.ctx.solver == "MOREAU":
+            self._moreau_solve_fn = self.ctx.solver_ctx.get_jax_solver()._impl.solve
+
     def __call__(
         self, *params: jnp.ndarray, solver_args: dict[str, Any] | None = None
     ) -> tuple[jnp.ndarray, ...]:
@@ -365,6 +374,117 @@ class CvxpyLayer:
         q_eval = self.q @ p_stack
         A_eval = self.A @ p_stack
 
+        # Check if solver has native JAX autodiff (Moreau)
+        # If so, bypass the closure-based custom_vjp wrapper and use Moreau's native autodiff
+        if self.ctx.solver == "MOREAU":
+            return self._solve_moreau(P_eval, q_eval, A_eval, batch, solver_args)
+
+        # Non-Moreau: use existing custom_vjp wrapper (not JIT-compatible)
+        return self._solve_with_custom_vjp(P_eval, q_eval, A_eval, batch, solver_args)
+
+    def _solve_moreau(
+        self,
+        P_eval: jnp.ndarray | None,
+        q_eval: jnp.ndarray,
+        A_eval: jnp.ndarray,
+        batch: tuple,
+        solver_args: dict[str, Any],
+    ) -> tuple[jnp.ndarray, ...]:
+        """Direct call to Moreau solver - uses its native custom_vjp (JIT-compatible).
+
+        Moreau's JAX solver (moreau.jax.Solver) implements custom_vjp with
+        pure_callback and vmap_method="broadcast_all", making it fully compatible
+        with jax.jit, jax.vmap, and jax.pmap.
+
+        This method uses jax.vmap for batched cases to ensure each problem is
+        solved individually, which is required for JIT compatibility.
+        """
+        solver_ctx = self.ctx.solver_ctx  # type: ignore[attr-defined]
+
+        # Apply per-call solver_args to solver settings
+        if solver_args:
+            settings = solver_ctx.get_jax_solver()._impl._settings
+            for key, value in solver_args.items():
+                if hasattr(settings, key):
+                    setattr(settings, key, value)
+
+        # Use cached solve function (captured as closure, not dynamic lookup)
+        solve_fn = self._moreau_solve_fn
+
+        # Cache solver_ctx attributes for closure capture
+        P_idx = solver_ctx.P_idx
+        A_idx = solver_ctx.A_idx
+        b_idx = solver_ctx.b_idx
+        m = solver_ctx.A_shape[0]
+
+        def extract_and_solve(
+            P_eval_single: jnp.ndarray | None,
+            q_eval_single: jnp.ndarray,
+            A_eval_single: jnp.ndarray,
+        ) -> tuple[jnp.ndarray, jnp.ndarray]:
+            """Extract problem data and solve a single (unbatched) problem."""
+            # Extract P values in CSR order
+            if P_idx is not None and P_eval_single is not None:
+                P_values = P_eval_single[P_idx]  # (nnzP,)
+            else:
+                P_values = jnp.zeros(0, dtype=jnp.float64)
+
+            # Extract A values in CSR order (negated for Ax + s = b form)
+            A_values = -A_eval_single[A_idx]  # (nnzA,)
+
+            # Extract b vector from the end of A_eval
+            b_start = A_eval_single.shape[0] - b_idx.size
+            b_raw = A_eval_single[b_start:]  # (b_idx.size,)
+
+            # Scatter b_raw into full b vector at correct indices
+            b = jnp.zeros(m, dtype=jnp.float64)
+            b = b.at[b_idx].set(b_raw)
+
+            # Extract q (linear cost) - exclude the constant term at the end
+            q = q_eval_single[:-1]  # (n,)
+
+            # Call moreau's solve with unbatched inputs
+            solution, _info = solve_fn(P_values, A_values, q, b)
+
+            return solution.x, solution.z  # (n,), (m,)
+
+        if batch:
+            # Batched case: inputs have shape (dim, batch)
+            # Transpose to (batch, dim) for vmap
+            P_eval_batched = P_eval.T if P_eval is not None else None
+            q_eval_batched = q_eval.T  # (batch, dim)
+            A_eval_batched = A_eval.T  # (batch, dim)
+
+            # Use vmap to solve each problem individually
+            vmapped_solve = jax.vmap(extract_and_solve, in_axes=(0, 0, 0))
+            primal, dual = vmapped_solve(P_eval_batched, q_eval_batched, A_eval_batched)
+            # primal: (batch, n), dual: (batch, m)
+
+        else:
+            # Unbatched case: inputs have shape (dim,)
+            primal, dual = extract_and_solve(P_eval, q_eval, A_eval)
+            # primal: (n,), dual: (m,)
+
+            # Add batch dimension for _recover_results (which expects it)
+            primal = jnp.expand_dims(primal, 0)  # (1, n)
+            dual = jnp.expand_dims(dual, 0)  # (1, m)
+
+        return _recover_results(primal, dual, self.ctx, batch)
+
+    def _solve_with_custom_vjp(
+        self,
+        P_eval: jnp.ndarray | None,
+        q_eval: jnp.ndarray,
+        A_eval: jnp.ndarray,
+        batch: tuple,
+        solver_args: dict[str, Any],
+    ) -> tuple[jnp.ndarray, ...]:
+        """Solve using closure-based custom_vjp wrapper (not JIT-compatible).
+
+        This is used for non-Moreau solvers (e.g., DIFFCP) that don't have
+        native JAX autodiff support. The closure-based approach stores data
+        in a Python dict for the backward pass, which breaks JIT tracing.
+        """
         # Store data and adjoint in closure for backward pass
         # This avoids JAX trying to trace through DIFFCP's Python-based solver
         data_container: dict[str, Any] = {}
@@ -407,11 +527,19 @@ def scipy_csr_to_jax_bcsr(
         return None
     # Use cast to help type checker understand scipy_csr is not None
     scipy_csr = cast(scipy.sparse.csr_array, scipy_csr)
+    num_rows, num_cols = scipy_csr.shape  # type: ignore[misc]
+
+    # JAX BCSR doesn't handle empty matrices (0 rows) properly.
+    # Create a minimal valid BCSR with a single zero element instead.
+    if num_rows == 0:
+        # Create a (1, num_cols) matrix with a single zero at position (0, 0)
+        # This will produce a (1, ...) result when multiplied, which we'll slice to (0, ...)
+        return _EmptyBCSRWrapper(num_cols)
+
     # Get the CSR format components
     values = scipy_csr.data
     col_indices = scipy_csr.indices
     row_ptr = scipy_csr.indptr
-    num_rows, num_cols = scipy_csr.shape  # type: ignore[misc]
 
     # Create the JAX BCSR tensor
     jax_bcsr = jax.experimental.sparse.BCSR(
@@ -420,3 +548,22 @@ def scipy_csr_to_jax_bcsr(
     )
 
     return jax_bcsr
+
+
+class _EmptyBCSRWrapper:
+    """Wrapper for empty (0-row) sparse matrices that JAX BCSR can't handle.
+
+    When multiplied with a vector/matrix, returns an empty array with the correct shape.
+    """
+
+    def __init__(self, num_cols: int):
+        self.num_cols = num_cols
+        self.shape = (0, num_cols)
+
+    def __matmul__(self, other: jnp.ndarray) -> jnp.ndarray:
+        # other shape: (num_cols,) or (num_cols, batch)
+        if other.ndim == 1:
+            return jnp.zeros((0,), dtype=other.dtype)
+        else:
+            batch_size = other.shape[1]
+            return jnp.zeros((0, batch_size), dtype=other.dtype)

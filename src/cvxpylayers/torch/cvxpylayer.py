@@ -71,18 +71,14 @@ def _apply_gp_log_transform(
     Returns:
         Tuple of transformed parameters (log-space for GP params, unchanged otherwise)
     """
-    if not ctx.gp or not ctx.gp_param_to_log_param:
+    if not ctx.gp or ctx.gp_log_mask is None:
         return params
 
-    params_transformed = []
-    for i, param in enumerate(params):
-        cvxpy_param = ctx.parameters[i]
-        if cvxpy_param in ctx.gp_param_to_log_param:
-            # This parameter needs log transformation for GP
-            params_transformed.append(torch.log(param))
-        else:
-            params_transformed.append(param)
-    return tuple(params_transformed)
+    # Use pre-computed mask for JIT compatibility (no dict lookups)
+    return tuple(
+        torch.log(p) if needs_log else p
+        for p, needs_log in zip(params, ctx.gp_log_mask)
+    )
 
 
 def _flatten_and_batch_params(
@@ -106,35 +102,43 @@ def _flatten_and_batch_params(
     """
     flattened_params: list[torch.Tensor | None] = [None] * (len(params) + 1)
 
+    # Always work with batch_size >= 1 for uniform processing
+    # batch is () for unbatched, (B,) for batched
+    effective_batch = batch if batch else (1,)
+
     for i, param in enumerate(params):
         # Check if this parameter is batched or needs broadcasting
-        if ctx.batch_sizes[i] == 0 and batch:  # type: ignore[index]
+        if ctx.batch_sizes[i] == 0:  # type: ignore[index]
             # Unbatched parameter - expand to match batch size
-            param_expanded = param.unsqueeze(0).expand(batch + param.shape)
+            param_expanded = param.unsqueeze(0).expand(effective_batch + param.shape)
             flattened_params[ctx.user_order_to_col_order[i]] = _reshape_fortran(
                 param_expanded,
-                batch + (-1,),
+                effective_batch + (-1,),
             )
         else:
-            # Already batched or no batch dimension needed
+            # Already batched
             flattened_params[ctx.user_order_to_col_order[i]] = _reshape_fortran(
                 param,
-                batch + (-1,),
+                effective_batch + (-1,),
             )
 
     # Add constant 1.0 column for offset terms in canonical form
     flattened_params[-1] = torch.ones(
-        batch + (1,),
+        effective_batch + (1,),
         dtype=params[0].dtype,
         device=params[0].device,
     )
 
     assert all(p is not None for p in flattened_params), "All parameters must be assigned"
-    p_stack = torch.cat(cast(list[torch.Tensor], flattened_params), -1)
-    # When batched, p_stack is (batch_size, num_params) but we need (num_params, batch_size)
-    if batch:
-        p_stack = p_stack.T
-    return p_stack
+    p_stack = torch.cat(flattened_params, -1)  # type: ignore[arg-type]
+    # p_stack is (batch_size, num_params), transpose to (num_params, batch_size)
+    p_stack = p_stack.T
+    # For unbatched case, squeeze the trailing dimension to get (num_params,)
+    # len(batch) is 0 for unbatched, 1 for batched - use this as a shape selector
+    # squeeze(-1) removes the last dimension if it's 1, otherwise no-op
+    # But we need conditional-free: use reshape with computed output shape
+    output_shape = (p_stack.shape[0],) + batch  # (num_params,) or (num_params, B)
+    return p_stack.reshape(output_shape)
 
 
 def _svec_to_symmetric(
@@ -150,7 +154,7 @@ def _svec_to_symmetric(
     Args:
         svec: Vectorized form, shape (*batch, n*(n+1)/2)
         n: Matrix dimension
-        batch: Batch dimensions
+        batch: Batch dimensions (from tensor shape, not boolean)
         rows: Row indices for unpacking
         cols: Column indices for unpacking
         scale: Optional scaling factors (for svec format with sqrt(2) scaling)
@@ -166,19 +170,14 @@ def _svec_to_symmetric(
     else:
         data = svec
 
+    # Output shape: (*batch, n, n) - works for () or (B,) batch
     out_shape = batch + (n, n)
-    if batch:
-        batch_size = int(np.prod(batch))
-        data_flat = data.reshape(batch_size, -1)
-        result = torch.zeros(batch_size, n, n, dtype=svec.dtype, device=svec.device)
-        result[:, rows_t, cols_t] = data_flat
-        result[:, cols_t, rows_t] = data_flat
-        return result.reshape(out_shape)
-    else:
-        result = torch.zeros(n, n, dtype=svec.dtype, device=svec.device)
-        result[rows_t, cols_t] = data
-        result[cols_t, rows_t] = data
-        return result
+    result = torch.zeros(out_shape, dtype=svec.dtype, device=svec.device)
+
+    # Use ellipsis indexing - works uniformly for any number of batch dimensions
+    result[..., rows_t, cols_t] = data
+    result[..., cols_t, rows_t] = data
+    return result
 
 
 def _unpack_primal_svec(svec: torch.Tensor, n: int, batch: tuple) -> torch.Tensor:
@@ -239,45 +238,46 @@ def _recover_results(
         primal: Primal solution from solver
         dual: Dual solution from solver
         ctx: Layer context with variable recovery info
-        batch: Batch dimensions tuple (empty if unbatched)
+        batch: Batch dimensions tuple (empty () for unbatched, (B,) for batched)
 
     Returns:
         Tuple of recovered variable values
     """
     results = []
+    # Solver always returns 2D tensors (batch_size, num_vars), even for unbatched (batch_size=1)
+    # Use internal_batch for intermediate processing, output_batch for final reshape
+    internal_batch = tuple(primal.shape[:-1])  # (1,) for unbatched, (B,) for batched
+    output_batch = batch  # () for unbatched, (B,) for batched
+
     for var in ctx.var_recover:
-        batch_shape = tuple(primal.shape[:-1])
-        if var.primal is not None:
+        # Use pre-computed source field to select data (JIT-compatible)
+        if var.source == "primal":
             data = primal[..., var.primal]
-            if var.is_symmetric:
-                # Unpack symmetric primal variable from vectorized form
-                results.append(_unpack_primal_svec(data, var.shape[0], batch_shape))
-            else:
-                results.append(_reshape_fortran(data, batch_shape + var.shape))
-        elif var.dual is not None:
+        else:  # var.source == "dual"
             data = dual[..., var.dual]
-            if var.is_psd_dual:
-                # Unpack PSD constraint dual from scaled vectorized form
-                results.append(_unpack_svec(data, var.shape[0], batch_shape))
-            else:
-                results.append(_reshape_fortran(data, batch_shape + var.shape))
+
+        # Use pre-computed unpack_fn field (JIT-compatible)
+        if var.unpack_fn == "svec_primal":
+            result = _unpack_primal_svec(data, var.shape[0], internal_batch)
+        elif var.unpack_fn == "svec_dual":
+            result = _unpack_svec(data, var.shape[0], internal_batch)
+        elif var.unpack_fn == "reshape":
+            result = _reshape_fortran(data, internal_batch + var.shape)
         else:
-            raise RuntimeError(
-                "Invalid VariableRecovery: both primal and dual slices are None. "
-                "At least one must be set to recover variable values."
-            )
+            raise ValueError(f"Unknown variable recovery type: {var.unpack_fn}")
+
+        # Reshape to output batch shape (removes dummy batch dim for unbatched)
+        # reshape from (1,) + var.shape to () + var.shape works because total elements match
+        results.append(result.reshape(output_batch + var.shape))
 
     # Apply exp transformation to recover primal variables from log-space for GP
     # (dual variables stay in original space - no transformation needed)
+    # Uses pre-computed source field (JIT-compatible)
     if ctx.gp:
         results = [
-            torch.exp(r) if var.primal is not None else r
+            torch.exp(r) if var.source == "primal" else r
             for r, var in zip(results, ctx.var_recover)
         ]
-
-    # Squeeze batch dimension for unbatched inputs
-    if not batch:
-        results = [r.squeeze(0) for r in results]
 
     return tuple(results)
 
